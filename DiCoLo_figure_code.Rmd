@@ -1,0 +1,417 @@
+---
+title: "DiCoLo_Figure_Code"
+author: "Ruiqi Li"
+date: '2026-01-13'
+output: pdf_document
+---
+# Load library
+```{r}
+library("Seurat")
+library("ggplot2")
+library("patchwork")
+devtools::install_github("KlugerLab/DiCoLo")
+library("DiCoLo")
+
+# source("../DiCoLo/vignettes/DiCoLo_functions.R")
+source("./simulation_functions.R")
+source("./plotting_functions.R")
+```
+
+# Figure 2A
+Load pbmc10k data
+```{r}
+dir.path = "DiCoLo_data"
+data.path = file.path(dir.path,"pbmc10k")
+
+data_S_merge = readRDS(file.path(data.path,"pbmc10k.rds"))
+DimPlot(data_S_merge, group.by = 'batch', shuffle = TRUE) + NoAxes() + 
+  ggtitle("CD14+ Monocytes")
+```
+Select cell neighborhoods and simulate co-localized gene modules
+```{r}
+res.path = file.path(data.path,"simulation_parameters")
+if(!dir.exists(res.path)){
+  dir.create(res.path,recursive = TRUE)
+}
+```
+```{r}
+params_ls = list()
+for(i in 1:2){
+  file_path = file.path(res.path,sprintf("params%d.rds",i))
+  if(!file.exists(file_path)){
+diff.pct = 0.7; zinb_prob = 0.4
+seed_ls = c(42,1208)
+n_neighbors_ls = c(4,4)
+sample_ls_short = paste0(sample_ls,"_injected","_",n_neighbors_ls)
+ngene_per_neighbors_ls = c(25,15,15,20)
+params_ls = lapply(1:2, function(i){
+  n_neighbors = n_neighbors_ls[i]
+  if(n_neighbors==0){
+    return(NULL)
+  }else{
+    set.seed(seed_ls[i])
+    ncell_per_neighbors_range = seq(0.03,0.1,0.01)
+    ncell_per_neighbors_range = floor(ncol(data_S_ls[[i]]) * ncell_per_neighbors_range)
+    ncell_per_neighbors_ls = sample(ncell_per_neighbors_range,n_neighbors)
+    gene_params = Generate_gene_parameters(data_S_ls[i][[1]], data_S_ls[-i][[1]], 
+                                           assay = "RNA", layer = "counts",
+                                           n_neighbors = n_neighbors,
+                                           ngene_per_neighbors_ls = ngene_per_neighbors_ls, 
+                                           seed = seed_ls[i],
+                                           mean_quantile = 0.9)
+    return(list(ncell_per_neighbors_ls = ncell_per_neighbors_ls,
+                seed = seed_ls[i],
+                zinb_prob = zinb_prob,
+                diff.pct = diff.pct,
+                gene_params = gene_params))
+  }
+})
+
+# Define common group
+set.seed(seed_ls[1])
+group_n = 2
+group_id = sample(1:n_neighbors_ls[1],group_n)
+params_ls[[1]]$ncell_per_neighbors_ls[group_id] = params_ls[[1]]$ncell_per_neighbors_ls[group_id] * 2
+params_ls[[2]]$ncell_per_neighbors_ls[group_id] = params_ls[[1]]$ncell_per_neighbors_ls[group_id]
+params_ls[[2]]$gene_params$selected_gene_groups[group_id] = params_ls[[1]]$gene_params$selected_gene_groups[group_id]
+
+# re-name gene group
+for(i in 1:2){
+  a = names(params_ls[[i]]$gene_params$selected_gene_groups)
+  a = ifelse(a %in% group_id, paste0("c_",a), paste0(i,"_",a))
+  names(params_ls[[i]]$gene_params$selected_gene_groups) = a
+  names(params_ls[[i]]$ncell_per_neighbors_ls) = a
+}
+
+# save params
+lapply(1:2,function(i){
+  saveRDS(params_ls[[i]],file = file.path(res.path,sprintf("params%d.rds",i)))
+})
+  }
+  else{
+    params_ls[[i]] = readRDS(file = file_path)
+  }
+}
+
+injected_genes_ls = lapply(params_ls,function(params){
+  if(is.null(params)){return(NULL)}
+  with(as.list(params),{
+    return(setNames(unlist(mapply(function(genes, val) rep(val, length(genes)), 
+                                  gene_params$selected_gene_groups, names(gene_params$selected_gene_groups), SIMPLIFY = FALSE)),
+                    unlist(gene_params$selected_gene_groups)))
+  })
+})
+injected_genes = unlist(injected_genes_ls)
+injected_genes = injected_genes[!duplicated(names(injected_genes))]
+# define module_cols
+color_m = setNames(brewer.pal(9,"Set1")[1:length(unique(injected_genes))],unique(injected_genes))
+color_m = gsub("#FFFF33","#F781BF",color_m)
+
+gene_params_merged = Map(c,params_ls[[1]]$gene_params,params_ls[[2]]$gene_params)
+tmp_genegroup = gene_params_merged$selected_gene_groups
+tmp_genegroup = tapply(seq_along(tmp_genegroup), names(tmp_genegroup), function(i) unique(unlist(tmp_genegroup[i])), simplify = FALSE)
+gene_params_merged$selected_gene_groups = tmp_genegroup
+gene_params_merged[2:5] = lapply(gene_params_merged[2:5],function(x) mean(x))
+other_params_merged = Map(c,params_ls[[1]][1:4],params_ls[[2]][1:4])
+other_params_merged$ncell_per_neighbors_ls = other_params_merged$ncell_per_neighbors_ls[!duplicated(names(other_params_merged$ncell_per_neighbors_ls))]
+other_params_merged[2:4] = lapply(other_params_merged[2:4],function(x) unique(x))
+params_merged = c(other_params_merged,list(gene_params = gene_params_merged))
+params_merged$ncell_per_neighbors_ls = params_merged$ncell_per_neighbors_ls[names(params_merged$gene_params$selected_gene_groups)]
+```
+```{r}
+# modify gene expression
+condition_vec = as.factor(data_S_merge$batch)
+data_S_merge_test = with(as.list(params_merged), {
+  srat_injected <- Inject_local_signals_v2(data_S_merge, condition_vec = condition_vec, 
+                                           assay = "RNA",
+                                           layer = "counts",
+                                           reduc = "pca", npc = 10, 
+                                           min_knn = max(ncell_per_neighbors_ls),
+                                           # min_knn = sum(sort(ncell_per_neighbors_ls,decreasing = T)[1:2]), 
+                                           ncell_per_neighbors_ls = ncell_per_neighbors_ls,
+                                           zinb_prob = zinb_prob, diff.pct = diff.pct, gene_params, seed = seed)
+  
+  srat_injected
+})
+data_S_merge_test[["umap"]] = data_S_merge[["umap"]]
+```
+```{r}
+DimPlot(data_S_merge_test, group.by = "signal_cells",
+        reduction = "umap", 
+        na.value = "lightgrey", 
+        cols = color_m,order = T, split.by = "batch", pt.size = 1.5) & NoAxes() & ggtitle(NULL)
+```
+
+# Figure 2B
+```{r}
+data_S_ls_test = SplitObject(data_S_merge_test,split.by = "batch")
+data_S_ls_test = lapply(data_S_ls_test, function(data_S){
+  data_S = data_S %>% NormalizeData() %>%
+    FindVariableFeatures() %>%
+    ScaleData(verbose = FALSE) %>% 
+    RunPCA(npcs = 50, verbose = FALSE) 
+  data_S
+})
+```
+```{r}
+# RunDUFS
+common_genes = union(SelectCommonGenes(data_S_ls_test[[1]],data_S_ls_test[[2]],
+                                   ngenes = 500),names(injected_genes))
+
+lapply(1:length(data_S_ls_test),function(i){
+  if(!file.exists(file.path(res.path,paste0("GeneTrajectory",i)))){
+    data_S = data_S_ls_test[[i]]
+    ComputeGeneEMD(data_S, common_genes, dir.path = file.path(res.path,paste0("GeneTrajectory",i)), script_dir = "../DiCoLo/vignettes")
+  }
+})
+
+gene_emd_ls = lapply(1:length(data_S_ls_test),function(i){
+  LoadGeneEMD(file.path(res.path,paste0("GeneTrajectory",i),""))
+})
+
+# Compute gene graph
+gene_graph_ls = lapply(gene_emd_ls, ComputeGraphOperator)
+
+# Visualize injected genes
+set.seed(4)
+other_genes = sample(setdiff(rownames(gene_emd_ls[[1]]),names(injected_genes)))[1:50]
+order_levels = c("c_1", "c_4", "1_2", "1_3", "2_2", "2_3")
+injected_genes_sorted <- factor(injected_genes, levels = order_levels)
+injected_genes_sorted <- injected_genes_sorted[order(injected_genes_sorted)]
+genes = c(names(injected_genes_sorted),other_genes)
+
+pl <- lapply(1:2,function(i){
+  gene_emd_dist = gene_graph_ls[[i]]
+  mat <- gene_emd_dist[genes,genes]
+  # hard-cap the matrix
+  cap_value <- quantile(mat[upper.tri(mat, diag = FALSE)], 0.95)
+  mat_capped <- mat
+  mat_capped[mat_capped > cap_value] <- cap_value
+  # min-max normalization
+  mat_capped = (mat_capped-min(mat_capped))/(max(mat_capped) - min(mat_capped))
+  
+  p = VisualizeGeneHeatmap(mat = mat_capped, gene_partition = injected_genes_sorted, 
+                       # gene_order = hclust(as.dist(gene_emd_dist[genes,genes]), method = "average")$'order',
+                       gene_order = 1:length(genes),
+                       # highlighted_genes = genes,
+                       module_color = color_m[order_levels])
+  as.ggplot(p)
+})
+
+wrap_plots(pl, nrow = 2) + plot_layout(guides = "collect")
+
+```
+
+# Figure 2C
+```{r}
+sample_diff = 1
+diff.op = ComputeDifferentialOperator(gene_graph_ls[sample_diff][[1]],gene_graph_ls[-sample_diff][[1]])
+E.list <- RunSVD(diff.op, eig_keep = nrow(diff.op))
+n_eigvec = FindKneePoint(E.list$values[1:floor(sqrt(length(E.list$values)))],plot.fig = TRUE) - 1
+```
+```{r}
+other_genes = setdiff(rownames(gene_emd_ls[[1]]),names(injected_genes))
+order_levels = c("c_1", "c_4", "1_2", "1_3", "2_2", "2_3")
+injected_genes_sorted <- factor(injected_genes, levels = order_levels)
+injected_genes_sorted <- injected_genes_sorted[order(injected_genes_sorted)]
+genes = c(names(injected_genes_sorted),other_genes)
+
+pl = lapply(1:n_eigvec,function(i){
+  p1 = Visualize_Eigenvec(E.list$vectors[genes,i],injected_genes_sorted)
+})
+wrap_plots(pl, nrow = 1)
+```
+
+```{r}
+sample_diff = 2
+diff.op = ComputeDifferentialOperator(gene_graph_ls[sample_diff][[1]],gene_graph_ls[-sample_diff][[1]])
+E.list <- RunSVD(diff.op, eig_keep = nrow(diff.op))
+n_eigvec = FindKneePoint(E.list$values[1:25],plot.fig = TRUE) - 1
+```
+```{r}
+other_genes = setdiff(rownames(gene_emd_ls[[1]]),names(injected_genes))
+order_levels = c("c_1", "c_4", "1_2", "1_3", "2_2", "2_3")
+injected_genes_sorted <- factor(injected_genes, levels = order_levels)
+injected_genes_sorted <- injected_genes_sorted[order(injected_genes_sorted)]
+genes = c(names(injected_genes_sorted),other_genes)
+
+pl = lapply(1:n_eigvec,function(i){
+  p1 = Visualize_Eigenvec(E.list$vectors[genes,i],injected_genes_sorted)
+})
+wrap_plots(pl, nrow = 1)
+```
+
+# Figure 3
+Code for generating benchmarking results `benchmarking_result.csv` for each dataset can be found in `run_benchmark.R`.
+```{r}
+dataset_ls = c("pbmc10k","pbmcsca","panc8")
+dataset_full_name = setNames(c("Human pbmc10k","Human pbmcsca","Human pancreas"),dataset_ls)
+method_full_name = setNames(c("DiCoLo","DGCA","LEMUR","miloDE"),c("DiCoLo","DGCA","lemur","milode"))
+para_full_name = setNames(c("neighborhood size","number of genes","dropout rate"),c("ncell","ngene","dropout-rate"))
+total_cell_ls = setNames(c(1108,596,1423),dataset_ls)
+df = do.call(rbind,lapply(dataset_ls,function(dataset){
+  tmp_path = dataset
+  df = read.csv(file.path(dir.path, tmp_path, "benchmarking_result.csv"))
+  df$'dataset' = dataset
+  df
+}))
+df$method = factor(df$method,levels = names(method_full_name))
+levels(df$method) = method_full_name[levels(df$method)]
+df$'para_grid' = ifelse(df$para_test == "ncell",sprintf("%s(%d)",df$para_grid,floor(df$para_grid*total_cell_ls[df$dataset])),
+                        df$'para_grid')
+df$dataset = factor(df$dataset,levels = names(dataset_full_name))
+levels(df$dataset) = dataset_full_name[levels(df$dataset)]
+df$para_test = ifelse(df$para_test == "zinb_prob","dropout-rate",df$para_test)
+df$para_test = para_full_name[df$para_test]
+
+df_summary <- df %>%
+  group_by(method, para_grid, para_test, dataset) %>%
+  summarise(
+    median_score = median(score, na.rm = TRUE),
+    lower = pmax(0,median_score - sd(score, na.rm = TRUE) / sqrt(n())),  # Standard error (SE)
+    upper = pmin(1,median_score + sd(score, na.rm = TRUE) / sqrt(n()))
+  )
+
+pl = lapply(unique(df_summary$para_test),function(para){
+  if(para != "neighborhood size"){
+    df_summary$para_grid = as.factor(as.numeric(df_summary$para_grid))
+    angle = 0
+  }else{angle = 90}
+  ggplot(data = df_summary %>% filter(para_test == para), 
+         aes(x = para_grid, y = median_score, 
+             group = method, color = method,
+             # linetype = method,shape = method
+             )) +
+    geom_line() +
+    geom_point(size = 2) + 
+    geom_errorbar(aes(ymin = lower, ymax = upper), 
+                  width = 0.4,linewidth = 0.8) + 
+    facet_grid( ~ dataset, scales = "free_x") +
+    # scale_y_continuous(limits = c(0,1)) +
+  labs(x = para, 
+       y = "Normalized AUPRC", 
+       color = "Method") + 
+    theme(
+      legend.title = element_text(size = 20),
+      legend.text = element_text(size = 15),
+      strip.text.x = element_text(size = 15),
+      axis.title.x = element_text(size = 20),
+      axis.title.y = element_text(size = 20),
+      axis.text.x = element_text(size = 15,angle = angle),
+      axis.text.y = element_text(size = 15),
+      panel.grid = element_blank(),
+      panel.background = element_blank(),
+      axis.line = element_line(colour = "black"))
+  
+})
+pl = lapply(1:length(pl),function(i){
+  p = pl[[i]]
+  if(i!=1){
+    p = p + theme(strip.text.x = element_blank())
+  }
+  p = p + labs(y = NULL)
+  p
+})
+
+wrap_plots(pl,ncol = 1) + plot_layout(guides = "collect")
+```
+
+# Figure 4A
+The preprocessed Seurat object can be downloaded from [figshare for Mutant](https://figshare.com/ndownloader/files/55008218) and [figshare for Wildtype](https://figshare.com/ndownloader/files/55008224).
+```{r}
+sample_ls = paste0("smom2_dermal_",paste0("E13.5_",c("MUT","CTL")))
+data_S_ls = lapply(sample_ls,function(sample_name){
+  readRDS(file.path(dir.path.data,"process_data",sprintf("data_S_%s.rds",sample_name)))
+})
+names(data_S_ls) = sample_ls
+
+# Visualize Merged embedding -----
+data_S_merge = merge(data_S_ls[[1]],data_S_ls[-1])
+data_S_merge = data_S_merge %>% NormalizeData() %>% 
+  FindVariableFeatures() %>% ScaleData() %>%
+  RunPCA(npcs = 50, verbose = FALSE) %>% 
+  RunUMAP(dims = 1:15,seed = 42)
+
+DimPlot(data_S_merge, group.by = 'orig.ident', shuffle = TRUE) + NoAxes() + 
+  ggtitle(NULL)
+```
+
+# Figure 4B
+```{r}
+color_ct = setNames(c("darkred","darkblue","#AC9362"),c("DC","LD","UD"))
+pl = lapply(data_S_ls,function(data_S){
+  DimPlot(data_S, group.by = "celltype", cols = color_ct) + NoAxes() + ggtitle(NULL)
+})
+(wrap_plots(pl,nrow = 2) & NoAxes() & ggtitle(NULL)) + plot_layout(guides = "collect")
+```
+```{r}
+data.path = file.path(dir.path,"smom2")
+merged_modules = do.call(c,lapply(c("MUT","CTL"),function(sample_name){
+  readRDS(file.path(data.path,paste0(sample_name,"_dicolo_modules.rds")))
+}))
+merged_modules_ls = split(names(merged_modules), merged_modules)[1:4]
+module_prefix = "Module_"
+data_S_ls = lapply(data_S_ls, function(data_S){
+  DefaultAssay(data_S) = "RNA"
+  # data_S = AddModuleActivityScore(data_S, gene_partition = merged_modules)
+  data_S <- AddModuleScore(
+    object = data_S,
+    features = merged_modules_ls,
+    ctrl = 100,
+    name = module_prefix
+  )
+  module_score = data_S@meta.data[,grepl(module_prefix,colnames(data_S@meta.data))]
+  module_score = apply(module_score,2,function(x) scale(x)[,1])
+  module_score = apply(module_score,2,function(x) (x - min(x)) / (max(x) - min(x)))
+  data_S = AddMetaData(data_S,module_score)
+})
+pl = lapply(data_S_ls,function(data_S){
+  FeaturePlot(data_S, features = paste0(module_prefix,seq_len(length(merged_modules_ls))), 
+              # cols = colorRampPalette(rev(brewer.pal(n = 10, name = "RdBu")))(100),
+              ncol = length(merged_modules_ls)) & 
+  scale_colour_gradientn(colours = brewer.pal(n = 9, name = "Reds")) & NoAxes()
+})
+(wrap_plots(pl,nrow = 2) & NoAxes() & ggtitle(NULL)) + plot_layout(guides = "collect")
+```
+
+
+# Figure 4C
+```{r}
+library("ReactomePA")
+library("org.Mm.eg.db")
+library("clusterProfiler")
+library("msigdbr")
+m_df = msigdbr(species = "Mus musculus", category = "H")
+m_df$gs_name = gsub("HALLMARK_","",m_df$gs_name)
+msig_result <- do.call(rbind,lapply(names(merged_modules_ls)[1:5], function(i){
+  df = enricher(gene=merged_modules_ls[[i]],
+           TERM2GENE = m_df[,c("gs_name","gene_symbol")],
+           pAdjustMethod = "none",pvalueCutoff = 0.1)@result
+  df$'modules' = i
+  df = df %>% filter(p.adjust < 0.2)
+  df = df[1:5,]
+  df <- df[complete.cases(df), ]
+  df
+}))
+msig_result$GeneRatio = unlist(lapply(msig_result$GeneRatio,function(x) eval(parse(text = x))))
+msig_result$logP = -log(msig_result$pvalue,base = 10)
+msig_result$Description <- factor(msig_result$Description,
+                                 levels = rev(unique(msig_result$Description[order(msig_result$pvalue)])))
+
+msig_result$modules = factor(msig_result$modules,levels = names(merged_modules_ls)[1:5])
+levels(msig_result$modules) = gsub("MUT","SmoM2_M",levels(msig_result$modules))
+levels(msig_result$modules) = gsub("CTL","CTL_M",levels(msig_result$modules))
+# Dotplot
+p = ggplot(msig_result, aes(x=modules, y=Description)) +
+  geom_point(aes(size=GeneRatio, color=logP), alpha=0.7) +
+  scale_color_gradientn(colors=colorRampPalette(c("blue","red"))(99), name="-log10_pvalue") +
+  scale_size_continuous(name = "Gene Ratio", limits = c(0, 1)) + 
+  theme_minimal() +
+  labs(size="Gene Ratio", x=NULL,y=NULL) + 
+  theme(legend.position = "bottom",
+        legend.box = "vertical",
+        axis.text.x = element_text(size = 10, angle = 45,hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 10)
+  )
+```
+

@@ -1,0 +1,17 @@
+# Data (too large for git)
+
+*.csv
+*.h5
+*.pkl
+*.h5ad
+*.rds
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
