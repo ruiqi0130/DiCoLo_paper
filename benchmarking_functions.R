@@ -4,6 +4,7 @@
 # remotes::install_github("csglab/GEDI")
 # devtools::install_github("andymckenzie/DGCA")
 library(reticulate)
+use_python("/usr/bin/python3", required = TRUE)
 
 # supervised embedding is more suitable for sensitive DE detection
 add_azimuth_supervised = function(sce , genes , split.by = "sample", ref_samples , query_samples, nPC = 30, reducedDim.name , bpparam){
@@ -206,6 +207,78 @@ RunDGCA <- function(srat1, srat2, input_genes){
 }
 
 
+RunMemento <- function(srat1, srat2, input_genes,
+                       capture_rate = 0.25, num_boot = 1000L, num_cpus = 4L){
+  data_S = merge(srat1, srat2)
+  data_S$'condition' = ifelse(colnames(data_S) %in% colnames(srat1), "condition1", "condition2")
+
+  counts = as.matrix(GetAssayData(data_S, assay = "RNA", layer = "counts"))
+  meta   = data_S@meta.data["condition"]
+  meta$'stim' = as.integer(ifelse(meta$condition == "condition1", 0L, 1L))  # cond1->0, cond2->1
+  
+  anndata   <- import("anndata")
+  sparse    <- import("scipy.sparse")
+  itertools <- import("itertools")
+  builtins  <- import_builtins()
+  np        <- import("numpy")
+  memento_pkg   <- import("memento")
+  
+  adata <- anndata$AnnData(
+    X   = sparse$csr_matrix(np$array(t(counts))),
+    obs = meta,
+    var = data.frame(gene = rownames(counts), row.names = rownames(counts))
+  )
+  adata$obs['capture_rate'] = capture_rate
+  
+  # expand binary_test_2d
+  memento_pkg$setup_memento(adata, q_column = 'capture_rate')
+  memento_pkg$create_groups(adata, label_columns = list('stim'))
+  memento_pkg$compute_1d_moments(adata, min_perc_group = 0.9)
+  
+  surviving_genes <- py_to_r(adata$uns[['memento']][['gene_list']])
+  test_genes <- intersect(input_genes, surviving_genes)
+  gene_pairs <- builtins$list(itertools$combinations(test_genes, 2L))
+  memento_pkg$compute_2d_moments(adata, gene_pairs)
+  
+  sample_meta <- memento_pkg$get_groups(adata)[c('stim')]
+  memento_pkg$ht_2d_moments(adata, treatment = sample_meta,
+                        num_boot = as.integer(num_boot),
+                        num_cpus = as.integer(num_cpus), verbose = 1L)
+  
+  ht  <- py_to_r(memento_pkg$get_2d_ht_result(adata))
+  mom <- py_to_r(memento_pkg$get_2d_moments(adata)[[1]])
+  
+  c1_col <- "sg^0"; c2_col <- "sg^1"
+  stopifnot(all(c(c1_col, c2_col) %in% colnames(mom)))
+  
+  res <- dplyr::inner_join(ht, mom[, c("gene_1","gene_2",c1_col,c2_col)],
+                           by = c("gene_1","gene_2"))
+  res$'corr_c1' = res[[c1_col]]
+  res$'corr_c2' = res[[c2_col]]
+  res$'delta'   = res$corr_c2 - res$corr_c1
+  res$'padj'    = p.adjust(res$corr_pval, method = "BH")
+  res$'direction' = ifelse(res$delta > 0, "condition2", "condition1")
+  res$'winner_pos' = ifelse(res$delta > 0, res$corr_c2 > 0, res$corr_c1 > 0)
+  attr(res, "n_genes_tested") = length(union(res$gene_1, res$gene_2))
+  attr(res, "n_genes_input")  = length(input_genes)
+  return(res)
+  
+  # res <- memento_pkg$binary_test_2d(
+  #   adata         = adata,
+  #   gene_pairs    = gene_pairs,
+  #   capture_rate  = capture_rate,
+  #   treatment_col = "stim",
+  #   num_cpus      = as.integer(num_cpus),
+  #   num_boot      = as.integer(num_boot)
+  # )
+  # res <- res$reset_index()
+  # res <- py_to_r(res)
+  # res$'padj'      = p.adjust(res$corr_pval, method = "BH")
+  # res$'direction' = ifelse(res$corr_coef > 0, "condition2", "condition1")
+  # return(res)
+}
+
+
 Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1"){
   if(method == "milode"){
     de_res = de_res %>% mutate(padj = pval_corrected_across_genes) %>% 
@@ -242,6 +315,21 @@ Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1
     de_res = de_res %>% arrange(.,desc(score)) %>% 
       distinct(.,gene, .keep_all = TRUE)
     de_res$'rank' = 1:nrow(de_res)
+  }
+  
+  if(method == "memento"){
+    de_res = de_res %>% filter(direction == direc) %>%
+      tidyr::pivot_longer(cols = c(gene_1, gene_2), values_to = "gene") %>%
+      select(gene, corr_pval, corr_coef)
+    if(nrow(de_res) == 0){
+      de_res = data.frame(gene = character(0), corr_pval = numeric(0), corr_coef = numeric(0),
+                          rank = nrow(de_res), score = numeric(0))
+    }else{
+      de_res = de_res %>% arrange(., corr_pval, desc(abs(corr_coef))) %>%
+        distinct(., gene, .keep_all = TRUE)
+      de_res$'rank'  = 1:nrow(de_res)
+      de_res$'score' = -log10(de_res$corr_pval)
+    }
   }
   
   rank_df = data.frame(gene = input_genes)

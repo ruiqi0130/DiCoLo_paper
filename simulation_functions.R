@@ -106,8 +106,10 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
                                     zinb_prob = 0.2, diff.pct = 0.8, 
                                     gene_params, seed,
                                     cov_strength = 0,
+                                    cov_K = 3,
+                                    cov_loading_sd = 1,
                                     diffuse = FALSE,
-                                    overlap_frac = NULL){
+                                    overlap_frac = NULL, cap_background = TRUE){
   
   merged_sample = FALSE
   set.seed(seed)
@@ -188,24 +190,47 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
     }
     
     if(cov_strength > 0){
-      # Generate shared latent variable per cell (Gamma-distributed)
-      # This induces positive correlation across genes within same cell
-      # cov_strength controls how much variance comes from shared vs independent
-      # Higher shape = less variance in latent = less correlation
-      shape_param = (1 - cov_strength) / cov_strength  # maps [0,1] -> [Inf, 0]
+      # -----------------------------------------------------------------
+      # K-factor latent covariance model (replaces the single shared
+      # scalar z_j). Each cell draws cov_K shared latent factors; each
+      # gene has its own signed loadings on those factors. The log-scale
+      # multiplier for gene g in cell j is  exp( w_g . f_j ), so the
+      # covariance between two genes is sigma^2 * (w_a . w_b):
+      #   - it VARIES across gene pairs (structured), because loadings
+      #     differ per gene, and
+      #   - it can be POSITIVE OR NEGATIVE, because loadings are mean-0.
+      # cov_strength keeps its meaning (overall covariance strength) via
+      # sigma(cov_strength); cov_strength = 0 routes to the independent
+      # branch below, so "0 = independent" is preserved.
+      #
+      # sigma is chosen so the per-gene multiplier variance matches the
+      # old Gamma model's CV^2 = cov_strength/(1-cov_strength) on average,
+      # keeping the cov_strength axis comparable to the original S7-D.
+      # Each gene's multiplier is mean-1 centered so the SIGNAL LEVEL is
+      # unchanged and only the covariance structure is added.
+      # -----------------------------------------------------------------
+      sigma = sqrt(-log(1 - cov_strength) / cov_K)  # 0 -> 0 (independent), monotone in cov_strength
+      
+      # Loadings: fixed per neighborhood, signed (mean 0) => +/- structured covariance
+      W = matrix(rnorm(n_genes * cov_K, mean = 0, sd = cov_loading_sd),
+                 nrow = n_genes, ncol = cov_K)
+      logvar_g = (sigma^2) * rowSums(W^2)           # per-gene log-variance, for mean-1 centering
+      
+      rownames(W) <- selected_genes
+      srat@misc[[paste0("cov_loadings_", names(gene_params$selected_gene_groups)[id])]] <- list(W = W, sigma = sigma)
       
       repeat {
-        # Shared latent: z_j for each cell in neighborhood
-        latent = rgamma(n_incore, shape = shape_param, rate = shape_param)  # mean = 1
+        # Shared latent factors per cell: f_j ~ N(0, sigma^2)
+        Fmat = matrix(rnorm(n_incore * cov_K, mean = 0, sd = sigma),
+                      nrow = n_incore, ncol = cov_K)
+        U = W %*% t(Fmat)                           # n_genes x n_incore log-scale effect
+        M = exp(U - 0.5 * logvar_g)                 # multiplier, E_f[M] = 1 per gene
         
-        # For each gene, sample NB with cell-specific mean = mu_signal * z_j
+        # For each gene, sample NB with cell-specific mean = base * M[g, ]
         signal_mat = matrix(0, nrow = n_genes, ncol = n_incore)
         for (i in seq_along(selected_genes)) {
-          if (diffuse) {
-            cell_means = mu_incore * latent
-          } else {
-            cell_means = gene_params$'mean_signal' * latent
-          }
+          base_i = if (diffuse) mu_incore else gene_params$'mean_signal'
+          cell_means = base_i * M[i, ]
           signal_mat[i, ] = rnbinom(n_incore, 
                                     mu = cell_means, 
                                     size = gene_params$'dispersion_signal')
@@ -214,9 +239,13 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
         # Background and dropout (same as original, per gene)
         excore_cells = setdiff(colnames(count_mtx), incore_cells)
         p_base <- max(min(1 - diff.pct, 1), 0)
-        max_excore <- n_incore
-        p_expr <- if (length(excore_cells) > 0) min(p_base, max_excore / length(excore_cells)) else 0
-        
+        if(cap_background){
+          max_excore <- n_incore
+          p_expr <- if (length(excore_cells) > 0) min(p_base, max_excore / length(excore_cells)) else 0
+        }else{
+          p_expr <- p_base
+        }
+                
         all_ok = TRUE
         for (i in seq_along(selected_genes)) {
           gene = selected_genes[i]
@@ -266,10 +295,13 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
           # the incore size.
           excore_cells = setdiff(colnames(count_mtx_changed), incore_cells)
           p_base <- max(min(1 - diff.pct, 1), 0)
-          # max_excore <- length(incore_cells)
-          # p_expr <- if (length(excore_cells)>0) min(p_base, max_excore / length(excore_cells)) else 0
-          p_expr <- p_base
-          
+          if(cap_background){
+            max_excore <- n_incore
+            p_expr <- if (length(excore_cells) > 0) min(p_base, max_excore / length(excore_cells)) else 0
+          }else{
+            p_expr <- p_base
+          }
+        
           background <- sapply(excore_cells, function(x) {
             if (runif(1) < p_expr) {
               rnbinom(1, mu = gene_params$'mean_noise', 
@@ -312,6 +344,62 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
   return(srat)
 }
 
+
+# ---------------------------------------------------------------------------
+# Summarize_injected_covariance
+#
+# Diagnostic for the K-factor covariance model. For each injected module it
+# computes the empirical gene-gene correlation among the injected genes,
+# measured across that module's injected cells, and reports how much of the
+# covariance is negative and its range. This is the evidence for R3-Q1: it
+# shows the design produces STRUCTURED (pair-varying) and SIGNED (+/-)
+# covariance, unlike the old single-scalar model (which was uniform and
+# strictly positive).
+#
+# Returns, per module and pooled: the correlation matrix, the fraction of
+# off-diagonal gene pairs that are negatively correlated, and the min / mean /
+# max correlation. Feed $cor_matrices into a heatmap (e.g. pheatmap) or
+# $pooled$offdiag into a histogram for the figure / point-to-point reply.
+# ---------------------------------------------------------------------------
+Summarize_injected_covariance <- function(srat) {
+  cov_info <- srat@misc[grep("^cov_loadings_", names(srat@misc))]
+  
+  if (length(cov_info) == 0) {
+    # cov_strength = 0, no loadings stored => all zeros
+    return(list(cov_matrices = list(), per_module = list(),
+                pooled = list(offdiag = 0, frac_negative = 0,
+                              min = 0, mean = 0, max = 0)))
+  }
+  
+  offdiag_of <- function(m) m[upper.tri(m)]
+  cor_matrices <- list()
+  per_module   <- list()
+  
+  for (nm in names(cov_info)) {
+    mod   <- sub("^cov_loadings_", "", nm)
+    W     <- cov_info[[nm]]$W
+    sigma <- cov_info[[nm]]$sigma
+    
+    # Theoretical pairwise covariance of log-scale multipliers
+    cov_mat <- (sigma^2) * (W %*% t(W))
+    rownames(cov_mat) <- colnames(cov_mat) <- rownames(W)
+    
+    od <- offdiag_of(cov_mat)
+    cor_matrices[[mod]] <- cov_mat
+    per_module[[mod]] <- list(
+      n_genes       = nrow(cov_mat),
+      frac_negative = mean(od < 0),
+      min = min(od), mean = mean(od), max = max(od)
+    )
+  }
+  
+  pooled_od <- unlist(lapply(cor_matrices, offdiag_of))
+  list(cor_matrices = cor_matrices, per_module = per_module,
+       pooled = list(offdiag = pooled_od,
+                     frac_negative = mean(pooled_od < 0),
+                     min = min(pooled_od), mean = mean(pooled_od),
+                     max = max(pooled_od)))
+}
 
 AddRandomNoise <- function(srat, n_shuffle_genes = 50, candidate_genes,
                            assay = "RNA", layer = "count", seed = 233){

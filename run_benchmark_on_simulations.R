@@ -1,6 +1,7 @@
 # Load library ----
 suppressPackageStartupMessages(
   {
+    library(DiCoLo)
     library(SingleCellExperiment)
     library(tibble)
     library(dplyr)
@@ -24,6 +25,7 @@ setwd("/data/ruiqi/DiCoLo_paper")
 source("./code/simulation_functions.R")
 source("./code/benchmarking_functions.R")
 # figure.path = "/banach1/ruiqi/bi_gene_graphs/figures"
+figure.path = "./figures"
 
 # Load data ------
 dir.path = "DiCoLo_data"
@@ -71,17 +73,18 @@ para_test_ls = c("ncell","ngene","zinb_prob",
 
 ## Default parameters ------
 ncell = 0.1
-ngene = 10
-zinb_prob = 0.7 # default 0.4
+ngene = 15
+zinb_prob = 0.4 # default 0.4
 diff.pct = 0.7
 cov_strength = 0
-mean_quantile = 0.75 # default 0.95
+mean_quantile = 0.95 # default 0.95
 diffuse = FALSE
-method_ls = c("milode","DGCA","lemur","DiCoLo")
+method_ls = c("milode","DGCA","lemur","DiCoLo","memento")
+n_neighbors_all_ls = list(c(1,0),c(0,1))
 
 ## Define tested parameters
 for(para_id in 1:length(para_test_ls)){
-  for(n_neighbors_ls in list(c(1,0),c(0,1))){
+  for(n_neighbors_ls in n_neighbors_all_ls){
     
 para_test = para_test_ls[para_id]
 test_id = paste0(n_neighbors_ls,collapse = "vs")
@@ -92,7 +95,7 @@ if(!dir.exists(res.path)){
 
 n_reps = 10
 seed_grid = make_seed_grid(n_reps,2, base_seed = para_id)
-
+# n_reps = 5
 ## Simulation params for reproducibility -----
 for(rep_id in seq_len(n_reps)){
   rep_path = file.path(res.path,paste0("rep",rep_id))
@@ -100,7 +103,7 @@ for(rep_id in seq_len(n_reps)){
     dir.create(rep_path,recursive = TRUE)
   }
   
-  mclapply(get(paste0(para_test,"_range")),function(para_value){
+  lapply(get(paste0(para_test,"_range")),function(para_value){
     assign(para_test,para_value)
     params_ls = lapply(1:2, function(i){
       n_neighbors = n_neighbors_ls[i]
@@ -138,7 +141,7 @@ for(rep_id in seq_len(n_reps)){
     lapply(1:2,function(i){
       saveRDS(params_ls[[i]],file = file.path(rep_path,sprintf("%s_params%d.rds",para_value,i)))
     })
-  },mc.cores = detectCores() - 1)
+  })
 }
 
 
@@ -146,7 +149,7 @@ for(rep_id in seq_len(n_reps)){
 for(rep_id in 1:n_reps){
   cat("rep",rep_id)
   rep_path = file.path(res.path,paste0("rep",rep_id))
-  simulation_ls <- mclapply(get(paste0(para_test,"_range")), function(para_value){
+  simulation_ls <- lapply(get(paste0(para_test,"_range")), function(para_value){
     params_ls = lapply(1:2,function(i){
       readRDS(file = file.path(rep_path,sprintf("%s_params%d.rds",para_value,i)))
     })
@@ -184,7 +187,7 @@ for(rep_id in 1:n_reps){
                                                    gene_params = gene_params, seed = seed, 
                                                    cov_strength = cov_strength,
                                                    diffuse = diffuse,
-                                                   overlap_frac = overlap_frac)
+                                                   overlap_frac = overlap_frac, cap_background = (para_test != "diff.pct"))
           cat(sprintf("  Done injecting sample %d\n", i))
           srat_injected
         })
@@ -198,93 +201,98 @@ for(rep_id in 1:n_reps){
                 common_genes=common_genes,
                 injected_genes=injected_genes,
                 params_ls = params_ls))
-  }, mc.cores = detectCores() - 1)
+  })
   names(simulation_ls) = get(paste0(para_test,"_range"))
   
   ## Results for each method -----
   sample_diff = which(n_neighbors_ls!=0)
   ### DiCoLo------
   # Run EMD
-  all_common_genes = lapply(simulation_ls,function(x) sort(unique(x[["common_genes"]])))
-  # test_common = lapply(all_common_genes,function(x) setdiff(x,Reduce(intersect, all_common_genes)))
-  # flag = all(lengths(test_common) == 0)
-  common_genes_overall = Reduce(union, all_common_genes)
-
-  emd_paths = lapply(get(paste0(para_test,"_range")),function(para_value){
-    simu_obj = simulation_ls[[as.character(para_value)]]
-    with(as.list(simu_obj), {
-      lapply(1:length(data_S_ls_test),function(i){
-        if(is.null(params_ls[[i]])){
-          tmp_path = file.path(rep_path,paste0("GeneTrajectory",i))
-          common_genes = common_genes_overall
-        }else{
-          tmp_path = file.path(rep_path,paste0(para_value,"_GeneTrajectory",i))
-        }
-        if(!dir.exists(tmp_path) & !file.exists(file.path(tmp_path,"emd.csv"))){
-          data_S = data_S_ls_test[[i]]
-          data_S = data_S %>% NormalizeData() %>%
-            FindVariableFeatures() %>%
-            ScaleData(verbose = FALSE) %>% 
-            RunPCA(npcs = 50, verbose = FALSE)
-          ComputeGeneEMD(data_S, common_genes, 
-                         dir.path = tmp_path)
-          message("Run on backend\n")
-          return(tmp_path)
-        }
+  if("DiCoLo" %in% method_ls){
+    all_common_genes = lapply(simulation_ls,function(x) sort(unique(x[["common_genes"]])))
+    # test_common = lapply(all_common_genes,function(x) setdiff(x,Reduce(intersect, all_common_genes)))
+    # flag = all(lengths(test_common) == 0)
+    common_genes_overall = Reduce(union, all_common_genes)
+    
+    emd_paths = lapply(get(paste0(para_test,"_range")),function(para_value){
+      simu_obj = simulation_ls[[as.character(para_value)]]
+      with(as.list(simu_obj), {
+        lapply(1:length(data_S_ls_test),function(i){
+          if(is.null(params_ls[[i]])){
+            tmp_path = file.path(rep_path,paste0("GeneTrajectory",i))
+            common_genes = common_genes_overall
+          }else{
+            tmp_path = file.path(rep_path,paste0(para_value,"_GeneTrajectory",i))
+          }
+          if(!dir.exists(tmp_path) & !file.exists(file.path(tmp_path,"emd.csv"))){
+            data_S = data_S_ls_test[[i]]
+            data_S = data_S %>% NormalizeData() %>%
+              FindVariableFeatures() %>%
+              ScaleData(verbose = FALSE) %>% 
+              RunPCA(npcs = 50, verbose = FALSE)
+            ComputeGeneEMD(data_S, common_genes, 
+                           dir.path = tmp_path)
+            message("Run on backend\n")
+            return(tmp_path)
+          }
+        })
       })
     })
-  })
-  emd_paths = unlist(emd_paths)
-  
-  # Wait for all jobs
-  repeat {
-    still_running <- !sapply(emd_paths, function(p) file.exists(file.path(p, "emd.csv")))
-    if (!any(still_running)) break
-    Sys.sleep(10)
+    emd_paths = unlist(emd_paths)
+    
+    # Wait for all jobs
+    repeat {
+      still_running <- !sapply(emd_paths, function(p) file.exists(file.path(p, "emd.csv")))
+      if (!any(still_running)) break
+      Sys.sleep(10)
+    }
+    message("All jobs finished. Proceeding...")
+    
+    # Compute Differential Operator
+    res_DiCoLo = lapply(get(paste0(para_test,"_range")),function(para_value){
+      simu_obj = simulation_ls[[as.character(para_value)]]
+      with(as.list(simu_obj), {
+        # Load gene EMD distance
+        gene_emd_ls = lapply(1:length(data_S_ls_test),function(i){
+          if(is.null(params_ls[[i]])){
+            tmp_path = file.path(rep_path,paste0("GeneTrajectory",i))
+          }else{
+            tmp_path = file.path(rep_path,paste0(para_value,"_GeneTrajectory",i))
+          }
+          LoadGeneEMD(file.path(tmp_path,""))
+        })
+        if(any(sapply(gene_emd_ls, is.null))){
+          return(NULL)
+        }
+        # Align gene name
+        g = Reduce(intersect, lapply(gene_emd_ls,function(x) rownames(x)))
+        gene_emd_ls = lapply(gene_emd_ls, function(x) x[g,g])
+        
+        gene_graph_ls = lapply(gene_emd_ls, ComputeGraphOperator)
+        diff.op = ComputeDifferentialOperator(gene_graph_ls[sample_diff][[1]], gene_graph_ls[-sample_diff][[1]])
+        E.list = RunSVD(diff.op, eig_keep = nrow(diff.op))
+        return(E.list)
+      })
+    })
+    names(res_DiCoLo) = get(paste0(para_test,"_range"))
+    res_DiCoLo = lapply(res_DiCoLo,function(x){
+      x$vectors
+    })
+  }else{
+    res_DiCoLo = NULL
   }
-  message("All jobs finished. Proceeding...")
-  
-  # Compute Differential Operator
-  res_DiCoLo = mclapply(get(paste0(para_test,"_range")),function(para_value){
-    simu_obj = simulation_ls[[as.character(para_value)]]
-    with(as.list(simu_obj), {
-      # Load gene EMD distance
-      gene_emd_ls = lapply(1:length(data_S_ls_test),function(i){
-        if(is.null(params_ls[[i]])){
-          tmp_path = file.path(rep_path,paste0("GeneTrajectory",i))
-        }else{
-          tmp_path = file.path(rep_path,paste0(para_value,"_GeneTrajectory",i))
-        }
-        LoadGeneEMD(file.path(tmp_path,""))
-      })
-      if(any(sapply(gene_emd_ls, is.null))){
-        return(NULL)
-      }
-      # Align gene name
-      g = Reduce(intersect, lapply(gene_emd_ls,function(x) rownames(x)))
-      gene_emd_ls = lapply(gene_emd_ls, function(x) x[g,g])
-      
-      gene_graph_ls = lapply(gene_emd_ls, ComputeGraphOperator)
-      diff.op = ComputeDifferentialOperator(gene_graph_ls[sample_diff][[1]], gene_graph_ls[-sample_diff][[1]])
-      E.list = RunSVD(diff.op, eig_keep = nrow(diff.op))
-      return(E.list)
-    })
-  }, mc.cores = detectCores() - 1)
-  names(res_DiCoLo) = get(paste0(para_test,"_range"))
-  res_DiCoLo = lapply(res_DiCoLo,function(x){
-    x$vectors
-  })
+
   
   ### MiloDE ------
   if("milode" %in% method_ls){
-    res_milode = mclapply(get(paste0(para_test,"_range")),function(para_value){
+    res_milode = lapply(get(paste0(para_test,"_range")),function(para_value){
       simu_obj = simulation_ls[[as.character(para_value)]]
       with(as.list(simu_obj), {
         res = RunMiloDE(data_S_ls_test[[1]], data_S_ls_test[[2]], input_genes = common_genes,
                         query_id = sample_diff)
         return(res)
       })
-    },mc.cores = detectCores() - 1)
+    })
     names(res_milode) = get(paste0(para_test,"_range"))
   }else{
     res_milode = NULL
@@ -292,13 +300,13 @@ for(rep_id in 1:n_reps){
   
   ### LEMUR ------
   if("lemur" %in% method_ls){
-    res_lemur = mclapply(get(paste0(para_test,"_range")),function(para_value){
+    res_lemur = lapply(get(paste0(para_test,"_range")),function(para_value){
       simu_obj = simulation_ls[[as.character(para_value)]]
       with(as.list(simu_obj), {
         res = RunLEMUR(data_S_ls_test[[1]], data_S_ls_test[[2]], input_genes = common_genes)
         return(res)
       })
-    }, mc.cores = detectCores() - 1)
+    })
     names(res_lemur) = get(paste0(para_test,"_range"))
   }else{
     res_lemur = NULL
@@ -306,23 +314,53 @@ for(rep_id in 1:n_reps){
   
   ### DGCA ------
   if("DGCA" %in% method_ls){
-    res_DGCA = mclapply(get(paste0(para_test,"_range")),function(para_value){
+    res_DGCA = lapply(get(paste0(para_test,"_range")),function(para_value){
       simu_obj = simulation_ls[[as.character(para_value)]]
       with(as.list(simu_obj), {
         res = RunDGCA(data_S_ls_test[[1]], data_S_ls_test[[2]], input_genes = common_genes)
         return(res)
       })
-    }, mc.cores = detectCores() - 1)
+    })
     names(res_DGCA) = get(paste0(para_test,"_range"))
   }else{
     res_DGCA = NULL
   }
   
+  ### Memento ------
+  if("memento" %in% method_ls){
+    res_memento = lapply(get(paste0(para_test,"_range")), function(para_value){
+      simu_obj = simulation_ls[[as.character(para_value)]]
+      with(as.list(simu_obj), {
+        tryCatch({
+          res = RunMemento(data_S_ls_test[[1]], data_S_ls_test[[2]],
+                           input_genes = common_genes,
+                           num_boot = 1000L, num_cpus = 4L)
+          return(res)
+        }, error = function(e){
+          message(sprintf("memento failed @ %s=%s: %s", para_test, para_value, conditionMessage(e)))
+          return(NULL)
+        })
+      })
+    })
+    names(res_memento) = get(paste0(para_test,"_range"))
+  }else{
+    res_memento = NULL
+  }
   
+  common_genes_list = lapply(get(paste0(para_test,"_range")), function(para_value){
+    simu_obj = simulation_ls[[as.character(para_value)]]
+    with(as.list(simu_obj), {
+      return(common_genes)
+    })
+  })
+  names(common_genes_list) = get(paste0(para_test,"_range"))
   saveRDS(list(res_DiCoLo = res_DiCoLo,
                res_milode = res_milode,
                res_lemur = res_lemur,
-               res_DGCA = res_DGCA), file = file.path(rep_path,"method_res.rds"))
+               res_DGCA = res_DGCA,
+               res_memento = res_memento,
+               common_genes = common_genes_list), 
+          file = file.path(rep_path,"method_res.rds"))
   
 }
 
@@ -330,7 +368,7 @@ for(rep_id in 1:n_reps){
 } # para_id
 
 ### Benchmarking result ------
-method_ls = c("milode","DGCA","lemur","DiCoLo")
+method_ls = c("milode","DGCA","lemur","DiCoLo","memento")
 
 zinb_prob_range = seq(0.1,0.7,0.1)
 ncell_range = c(seq(0.03,0.04,0.01),seq(0.05,0.3,0.05))
@@ -355,7 +393,8 @@ df = do.call(rbind,lapply(para_test_ls,function(para_test){
       rep_path = file.path(res.path,paste0("rep",rep_id))
       if(!file.exists(file.path(rep_path,"method_res.rds"))) return(NULL)
       method_res = readRDS(file.path(rep_path,"method_res.rds"))
-      simulation_ls <- mclapply(get(paste0(para_test,"_range")), function(para_value){
+      names(method_res$'common_genes') = get(paste0(para_test,"_range"))
+      simulation_ls <- lapply(get(paste0(para_test,"_range")), function(para_value){
         params_ls = lapply(1:2,function(i){
           readRDS(file = file.path(rep_path,sprintf("%s_params%d.rds",para_value,i)))
         })
@@ -377,7 +416,7 @@ df = do.call(rbind,lapply(para_test_ls,function(para_test){
         injected_genes = injected_genes[!duplicated(names(injected_genes))]
         return(list(injected_genes=injected_genes,
                     params_ls = params_ls))
-      }, mc.cores = detectCores() - 1)
+      })
       names(simulation_ls) = get(paste0(para_test,"_range"))
       
       ## Results for each method
@@ -389,9 +428,9 @@ df = do.call(rbind,lapply(para_test_ls,function(para_test){
             if(!as.character(para_value) %in% names(get(paste0("res_",method))) | is.null(get(paste0("res_",method))[[as.character(para_value)]]) ){
               return(NA)
             }
-            common_genes = rownames(res_DiCoLo[[as.character(para_value)]])
+            common_genes = common_genes[[as.character(para_value)]]
             if(is.null(common_genes)){
-              common_genes = res_lemur[[as.character(para_value)]]$name
+              common_genes = rownames(res_DiCoLo[[as.character(para_value)]])
             }
             df = Generate_rank_table(de_res = get(paste0("res_",method))[[as.character(para_value)]], 
                                      method = method, input_genes = common_genes, 
@@ -446,7 +485,35 @@ p = ggplot(data = df %>% filter(para_test %in% c("cov_strength")),
     panel.grid = element_blank(),
     panel.background = element_blank(),
     axis.line = element_line(colour = "black"))
-ggsave(file.path(figure.path,"f8-sup-2.png"), p, width = 7, height = 5)
+ggsave(file.path(figure.path,"figS7D.png"), p, width = 7, height = 5)
+
+
+p = ggplot(data = df %>% filter(method %in% c("memento","DGCA")) %>%
+             mutate(para_grid = factor(para_grid, levels = sort(unique(as.numeric(as.character(para_grid))))),
+                    para_test = recode(para_test,
+                                       ncell = "neighborhood size",
+                                       ngene = "number of genes",
+                                       zinb_prob = "dropout rate")), 
+           aes(x = para_grid,
+               y = score,color = method
+           )) +
+  geom_boxplot() + facet_wrap(~para_test, scales = "free") + 
+  labs(
+    x = "",
+    # x = "cov strength",
+    y = "Normalized AUPRC") + 
+  theme(
+    legend.title = element_text(size = 20),
+    legend.text = element_text(size = 15),
+    strip.text.x = element_text(size = 15),
+    axis.title.x = element_text(size = 20),
+    axis.title.y = element_text(size = 20),
+    # axis.text.x = element_text(size = 15),
+    # axis.text.y = element_text(size = 15),
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black"))
+ggsave(file.path(figure.path,"figS8.png"), p, width = 10, height = 5)
 
 df_summary <- df %>%
   group_by(method, para_grid) %>%
