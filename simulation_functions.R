@@ -109,7 +109,8 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
                                     cov_K = 3,
                                     cov_loading_sd = 1,
                                     diffuse = FALSE,
-                                    overlap_frac = NULL, cap_background = TRUE){
+                                    overlap_frac = NULL, cap_background = TRUE,
+                                    batch_downsample = 1){
   
   merged_sample = FALSE
   set.seed(seed)
@@ -329,6 +330,14 @@ Inject_local_signals_v2 <- function(srat, condition_vec = NULL, assay = "RNA",
     srat$'signal_cells'[incore_cells] = names(gene_params$'selected_gene_groups')[id]
     srat[[assay]]@meta.features[selected_genes,'signal_genes'] = names(gene_params$'selected_gene_groups')[id]
   
+  }
+  
+  # batch dropout for signal cells
+  if(batch_downsample < 1){
+    cat("downsample UMI by: ",batch_downsample)
+    signal_cells <- names(which(!is.na(srat$signal_cells)))
+    count_mtx[, signal_cells] <- as.matrix(scuttle::downsampleMatrix(
+      count_mtx[, signal_cells], prop = batch_downsample, bycol = TRUE))
   }
   
   # Update srat obj

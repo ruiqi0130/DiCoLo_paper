@@ -150,10 +150,10 @@ RunMiloDE <- function(srat1, srat2, seed = 42, input_genes, query_id = 1, ncores
     group_by(condition) %>%
     summarise(mean_value = mean(value))
   
-  # pos_sample = ifelse(tmp_expr$mean_value[tmp_expr$condition == "condition1"] > tmp_expr$mean_value[tmp_expr$condition == "condition2"], "condition1","condition2")
-  # neg_sample = setdiff(tmp_expr$condition,pos_sample)
-  # de_milo$'direction' = ifelse(de_milo$logFC > 0, pos_sample, ifelse(de_milo$logFC < 0, neg_sample, NA))
-  de_milo$'direction' = ifelse(de_milo$logFC > 0, "condition1", ifelse(de_milo$logFC < 0, "condition2", NA))
+  pos_sample = ifelse(tmp_expr$mean_value[tmp_expr$condition == "condition1"] > tmp_expr$mean_value[tmp_expr$condition == "condition2"], "condition1","condition2")
+  neg_sample = setdiff(tmp_expr$condition,pos_sample)
+  de_milo$'direction' = ifelse(de_milo$logFC > 0, pos_sample, ifelse(de_milo$logFC < 0, neg_sample, NA))
+  # de_milo$'direction' = ifelse(de_milo$logFC > 0, "condition1", ifelse(de_milo$logFC < 0, "condition2", NA))
   
   return(de_milo)
 }
@@ -279,7 +279,7 @@ RunMemento <- function(srat1, srat2, input_genes,
 }
 
 
-Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1"){
+Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1", n_eig = 1){
   if(method == "milode"){
     de_res = de_res %>% mutate(padj = pval_corrected_across_genes) %>% 
       filter(direction == direc) %>% 
@@ -310,8 +310,13 @@ Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1
     de_res$'score' = -log10(de_res$padj)
   }
   
-  if(method == "DiCoLo"){ # not fixed, use 1st eigen vectors
-    de_res = data.frame(gene = rownames(de_res), score = abs(de_res[,1]))
+  if(method == "DiCoLo"){ 
+    if(n_eig == 1){
+      de_res = data.frame(gene = rownames(de_res), score = abs(de_res[,1]))
+    } else {
+      de_res = data.frame(gene = rownames(de_res),
+                          score = apply(abs(de_res[, 1:n_eig, drop = FALSE]), 1, max))
+    }
     de_res = de_res %>% arrange(.,desc(score)) %>% 
       distinct(.,gene, .keep_all = TRUE)
     de_res$'rank' = 1:nrow(de_res)
@@ -353,7 +358,7 @@ get_auc = function(gene_list = NULL, real_score,
   if(metric == "auprc"){
     pr <- PRROC::pr.curve(scores.class0 = df$real_score[df$marker_binary == 1], 
                           scores.class1 = df$real_score[df$marker_binary == 0], 
-                          curve = TRUE)
+                          curve = plot)
     auprc = pr$auc.integral
     
     # balance auprc
@@ -372,16 +377,17 @@ get_auc = function(gene_list = NULL, real_score,
   }else if(metric == "auroc"){
     cat("Rank in decreasing order\n")
     df[order(df$real_score,decreasing = TRUE),'rank'] = 1:nrow(df)
-    roc_obj = AUROC::roc(df$marker_binary, df$rank, direction = ">")
-    auroc = as.numeric(AUROC::auc(roc_obj))
+    roc_obj = pROC::roc(response = df$marker_binary, 
+                        predictor = df$rank, direction = ">",
+                        levels = c(0, 1),quiet = TRUE)
+    auroc = as.numeric(pROC::auc(roc_obj))
     
     if(plot){
       roc_coords <- data.frame(
-        fpr = roc_obj$fpr,
-        tpr = roc_obj$tpr,
-        thresholds = roc_obj$thresholds
+        fpr = 1 - roc_obj$specificities,
+        tpr = roc_obj$sensitivities
       )
-      return(list(auc_score = auprc_balanced, 
+      return(list(auc_score = auroc, 
                   curve = roc_coords))
     }else{
       return(auroc)

@@ -67,12 +67,13 @@ cov_strength_range = seq(0,0.8,0.2)
 diff.pct_range = seq(0.9,0.1,-0.1)
 diffuse_range = c(FALSE, TRUE)
 overlap_range = seq(0.5, 1.0, 0.1)
+batch_downsample_range = c(1, 0.75, 0.5, 0.3, 0.1)
 para_test_ls = c("ncell","ngene","zinb_prob",
                  "cov_strength","diff.pct",
-                 "diffuse","overlap")
+                 "diffuse","overlap","batch_downsample")
 
 ## Default parameters ------
-ncell = 0.1
+ncell = 0.3 # default 0.1
 ngene = 15
 zinb_prob = 0.4 # default 0.4
 diff.pct = 0.7
@@ -81,6 +82,7 @@ mean_quantile = 0.95 # default 0.95
 diffuse = FALSE
 method_ls = c("milode","DGCA","lemur","DiCoLo","memento")
 n_neighbors_all_ls = list(c(1,0),c(0,1))
+batch_downsample = 1
 
 ## Define tested parameters
 for(para_id in 1:length(para_test_ls)){
@@ -105,6 +107,7 @@ for(rep_id in seq_len(n_reps)){
   
   lapply(get(paste0(para_test,"_range")),function(para_value){
     assign(para_test,para_value)
+    
     params_ls = lapply(1:2, function(i){
       n_neighbors = n_neighbors_ls[i]
       if(n_neighbors==0){
@@ -134,7 +137,8 @@ for(rep_id in seq_len(n_reps)){
                     gene_params = gene_params,
                     cov_strength = cov_strength,
                     diffuse = diffuse,
-                    overlap_frac = overlap_val))
+                    overlap_frac = overlap_val,
+                    batch_downsample = batch_downsample))
       }
     })
     # save params
@@ -187,7 +191,9 @@ for(rep_id in 1:n_reps){
                                                    gene_params = gene_params, seed = seed, 
                                                    cov_strength = cov_strength,
                                                    diffuse = diffuse,
-                                                   overlap_frac = overlap_frac, cap_background = (para_test != "diff.pct"))
+                                                   overlap_frac = overlap_frac, 
+                                                   cap_background = (para_test != "diff.pct"),
+                                                   batch_downsample = batch_downsample)
           cat(sprintf("  Done injecting sample %d\n", i))
           srat_injected
         })
@@ -230,9 +236,14 @@ for(rep_id in 1:n_reps){
               FindVariableFeatures() %>%
               ScaleData(verbose = FALSE) %>% 
               RunPCA(npcs = 50, verbose = FALSE)
-            ComputeGeneEMD(data_S, common_genes, 
-                           dir.path = tmp_path)
-            message("Run on backend\n")
+            tryCatch({
+              ComputeGeneEMD(data_S, common_genes, dir.path = tmp_path)
+              message("Run on backend\n")
+            }, error = function(e){
+              message(sprintf("GeneEMD failed @ %s: %s", para_value, conditionMessage(e)))
+              dir.create(tmp_path, showWarnings = FALSE)
+              write.csv(NULL, file.path(tmp_path, "emd.csv"))  # placeholder
+            })
             return(tmp_path)
           }
         })
@@ -459,6 +470,7 @@ df = do.call(rbind,lapply(para_test_ls,function(para_test){
   })
 }))
 df = do.call(rbind,df)
+
 write.csv(df,file = file.path(data.path,"benchmarking_result.csv"),row.names = FALSE)
 
 
