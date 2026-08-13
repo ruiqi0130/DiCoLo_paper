@@ -75,10 +75,10 @@ para_test_ls = c("ncell","ngene","zinb_prob",
 ## Default parameters ------
 ncell = 0.3 # default 0.1
 ngene = 15
-zinb_prob = 0.4 # default 0.4
+zinb_prob = 0.6 # default 0.4
 diff.pct = 0.7
 cov_strength = 0
-mean_quantile = 0.95 # default 0.95
+mean_quantile = 0.75 # default 0.95
 diffuse = FALSE
 method_ls = c("milode","DGCA","lemur","DiCoLo","memento")
 n_neighbors_all_ls = list(c(1,0),c(0,1))
@@ -404,6 +404,7 @@ df = do.call(rbind,lapply(para_test_ls,function(para_test){
       rep_path = file.path(res.path,paste0("rep",rep_id))
       if(!file.exists(file.path(rep_path,"method_res.rds"))) return(NULL)
       method_res = readRDS(file.path(rep_path,"method_res.rds"))
+      if(is.null(method_res$'common_genes')){method_res$'common_genes' = lapply(method_res$'res_DiCoLo',function(x) rownames(x))}
       names(method_res$'common_genes') = get(paste0(para_test,"_range"))
       simulation_ls <- lapply(get(paste0(para_test,"_range")), function(para_value){
         params_ls = lapply(1:2,function(i){
@@ -470,13 +471,14 @@ df = do.call(rbind,lapply(para_test_ls,function(para_test){
   })
 }))
 df = do.call(rbind,df)
+write.csv(df,file = file.path(data.path,"parameters",para_test,"benchmarking_result.csv"),row.names = FALSE)
+df <- read.csv(file.path(data.path,"parameters",para_test,"benchmarking_result.csv"))
 
-write.csv(df,file = file.path(data.path,"benchmarking_result.csv"),row.names = FALSE)
-
-
+# write.csv(df,file = file.path(data.path,"benchmarking_result.csv"),row.names = FALSE)
+# df <- read.csv(file.path(data.path,"benchmarking_result.csv"))
 # Plot
 df$method = factor(df$method, levels = c("DiCoLo","DGCA","lemur","milode"))
-p = ggplot(data = df %>% filter(para_test %in% c("cov_strength")), 
+p = ggplot(data = df, 
        aes(x = para_grid,
            y = score,color = method
        )) +
@@ -485,6 +487,7 @@ p = ggplot(data = df %>% filter(para_test %in% c("cov_strength")),
   labs(
        x = "Background expression fraction",
        # x = "cov strength",
+       # x = "UMI Downsampling Proportion",
        y = "Normalized AUPRC") + 
   theme(
     legend.title = element_text(size = 20),
