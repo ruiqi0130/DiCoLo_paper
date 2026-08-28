@@ -73,12 +73,12 @@ para_test_ls = c("ncell","ngene","zinb_prob",
                  "diffuse","overlap","batch_downsample")
 
 ## Default parameters ------
-ncell = 0.3 # default 0.1
+ncell = 0.1 # default 0.1
 ngene = 15
-zinb_prob = 0.6 # default 0.4
+zinb_prob = 0.4 # default 0.4
 diff.pct = 0.7
 cov_strength = 0
-mean_quantile = 0.75 # default 0.95
+mean_quantile = 0.95 # default 0.95
 diffuse = FALSE
 method_ls = c("milode","DGCA","lemur","DiCoLo","memento")
 n_neighbors_all_ls = list(c(1,0),c(0,1))
@@ -97,7 +97,7 @@ if(!dir.exists(res.path)){
 
 n_reps = 10
 seed_grid = make_seed_grid(n_reps,2, base_seed = para_id)
-# n_reps = 5
+
 ## Simulation params for reproducibility -----
 for(rep_id in seq_len(n_reps)){
   rep_path = file.path(res.path,paste0("rep",rep_id))
@@ -150,7 +150,7 @@ for(rep_id in seq_len(n_reps)){
 
 
 ## Generate simulated sample list ------
-for(rep_id in 1:n_reps){
+for(rep_id in seq_len(n_reps)){
   cat("rep",rep_id)
   rep_path = file.path(res.path,paste0("rep",rep_id))
   simulation_ls <- lapply(get(paste0(para_test,"_range")), function(para_value){
@@ -229,6 +229,7 @@ for(rep_id in 1:n_reps){
             common_genes = common_genes_overall
           }else{
             tmp_path = file.path(rep_path,paste0(para_value,"_GeneTrajectory",i))
+            common_genes = common_genes_overall
           }
           if(!dir.exists(tmp_path) & !file.exists(file.path(tmp_path,"emd.csv"))){
             data_S = data_S_ls_test[[i]]

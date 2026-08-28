@@ -61,7 +61,7 @@ cfg <- list(
   target_type  = "UD",                         # the type whose proportion we sweep
   lock_type    = "LD",                         # locked (untouched in B)
   exclude_types = c("DC"),                      # drop rare types from THIS test
-  fractions    = c(1.0, 0.75, 0.5, 0.25, 0.10, 0.05, 0.0),  # target retained in B
+  fractions    = c(1.0, 0.75, 0.5, 0.25, 0.10, 0.05, 0.03, 0.0),  # target retained in B
   n_reps       = 10,
   base_seed    = 2026,
   ngenes_common = 500,       # HVGs for the DiCoLo gene set (marker genes added in)
@@ -147,8 +147,7 @@ eligible  <- names(expr_pct)[expr_pct > 0.005 & expr_pct < 0.5]
 mk <- FindMarkers(srat_ctl, ident.1 = cfg$target_type,
                   only.pos = TRUE, verbose = FALSE)
 mk <- mk[rownames(mk) %in% eligible, ]
-target_markers <- head(rownames(mk[order(mk$p_val_adj, -mk$avg_log2FC), ]),
-                       cfg$n_marker)
+target_markers <- rownames(mk[order(mk$p_val_adj, -mk$avg_log2FC), ])[1:cfg$n_marker]
 message(sprintf("Monitoring %d %s markers.", length(target_markers), cfg$target_type))
 
 # ======================= MAIN SWEEP ==========================================
@@ -214,7 +213,7 @@ for(frac in cfg$fractions){
     z_scores <- (v - med) / s
     
     sig_mat <- tryCatch(
-      SelectSignificantGenes(E.list$vectors[, 1, drop = FALSE]),
+      SelectSignificantGenes(E.list$vectors[, 1, drop = FALSE],max_genes = nrow(E.list$vectors)),
       error = function(e) {
         cat("  locfdr failed (null-like distribution):", conditionMessage(e), "\n")
         matrix(0, nrow = nrow(E.list$vectors), ncol = 1)
@@ -252,6 +251,8 @@ excess_kurtosis <- function(x) {
   mean((x - m)^4) / s^2 - 3
 }
 
+
+top_ns <- c(50)
 stat_table <- do.call(rbind, lapply(results, function(r) {
   z <- r$z_scores
   z <- z[is.finite(z)]
@@ -261,8 +262,35 @@ stat_table <- do.call(rbind, lapply(results, function(r) {
   nb        <- null_bounds(n, level = 0.975)
   max_absz  <- max(abs(z))
   exc_kurt  <- excess_kurtosis(z)
-  n_exceed  <- sum(abs(z) > nb$maxz_env)   # # genes beyond this point's own null envelope
   
+  # --- AUPRC for each top-N marker set ---
+  V     <- r$E.list$vectors
+  de <- data.frame(gene = rownames(V), score = abs(V[, 1]),
+                   stringsAsFactors = FALSE)
+  de <- de %>% arrange(desc(score)) %>% distinct(gene, .keep_all = TRUE)
+  de$rank <- seq_len(nrow(de))
+  real_score <- setNames(-de$rank, de$gene)     # higher = better, matches benchmark
+  ng <- nrow(de)
+  rank_pct <- setNames(de$rank / ng, de$gene)
+  
+  # per top-N: median rank percentile of markers present in this gene set
+  rankpct_vals <- sapply(top_ns, function(N) {
+    gt <- head(target_markers, N); gt <- gt[gt %in% de$gene]
+    if (length(gt) < 1) return(NA_real_)
+    median(rank_pct[gt])
+  })
+  names(rankpct_vals) <- paste0("rankpct_top", top_ns)
+  
+  # AUPRC / AUROC
+  auc_vals <- sapply(top_ns, function(N) {
+    gt <- head(target_markers, N)
+    gt <- gt[gt %in% de$gene]
+    if (length(gt) < 1) return(NA_real_)
+    get_auc(real_score = real_score, gt_gene_ls = gt, metric = "auprc", plot = FALSE)
+    # get_auc(real_score = real_score, gt_gene_ls = gt, metric = "auroc", plot = FALSE)
+  })
+  names(auc_vals) <- paste0("auc_top", top_ns)
+
   data.frame(
     frac          = r$frac,
     prop_target_B = r$prop_target_B,
@@ -273,55 +301,50 @@ stat_table <- do.call(rbind, lapply(results, function(r) {
     n_sig_marker  = sum(r$signf_genes %in% r$marker_tested),
     max_absz      = max_absz,
     excess_kurt   = exc_kurt,
-    n_exceed_env  = n_exceed,
+    n_exceed_env  = sum(abs(z) > nb$maxz_env),
     maxz_env95    = nb$maxz_env,
     kurt_ub95     = nb$kurt_ub,
-    maxz_exceed   = max_absz  > nb$maxz_env,  
-    kurt_exceed   = exc_kurt  > nb$kurt_ub, 
+    first_eigen_val = r$E.list$values[1],
+    as.list(rankpct_vals),
+    as.list(auc_vals),
     stringsAsFactors = FALSE
   )
 }))
 
 
-
-
 # ======================= PLOT ================================================
-# Primary: significant target-type markers vs target proportion in B.
-plot_df <- results %>%
-  group_by(prop_target_B) %>%
-  summarise(mean_sig = mean(n_sig_marker),
-            se = sd(n_sig_marker) / sqrt(n()), .groups = "drop")
-
-p <- ggplot(plot_df, aes(x = prop_target_B, y = mean_sig)) +
-  geom_line() + geom_point(size = 2) +
-  geom_errorbar(aes(ymin = pmax(0, mean_sig - se), ymax = mean_sig + se),
-                width = 0.02) +
-  scale_x_reverse() +   # 100% (left) -> 0% (right): signal should switch on at the right
-  labs(x = sprintf("%s proportion in condition B", cfg$target_type),
-       y = sprintf("# significant %s markers (FDR < %.2f)",
-                   cfg$target_type, cfg$fdr_cutoff)) +
-  theme(panel.grid = element_blank(),
-        panel.background = element_blank(),
-        axis.line = element_line(colour = "black"),
-        axis.title = element_text(size = 16),
-        axis.text = element_text(size = 13))
-
-results$prop_bin <- factor(round(results$prop_target_B, 3))  
-p <- ggplot(results, aes(x = prop_bin, y = n_sig_marker)) +
+stat_table$prop_bin <- factor(round(stat_table$prop_target_B, 3))  
+p <- ggplot(stat_table, aes(x = prop_bin, y = rankpct_top50)) +
   geom_boxplot(outlier.size = 0.8, width = 0.6) +
-  geom_jitter(width = 0.12, size = 1, alpha = 0.4) +   
-  scale_x_discrete(limits = rev) +  
+  geom_jitter(width = 0.12, size = 1, alpha = 0.4) +
+  scale_y_reverse(limits = c(1, 0)) +
   labs(x = sprintf("%s proportion in condition B", cfg$target_type),
-       y = sprintf("# significant %s markers (FDR < %.2f)",
-                   cfg$target_type, cfg$fdr_cutoff)) +
+       y = "Median rank percentile of top50 UD markers\n(top = ranked first, bottom = ranked last)") +
   theme(panel.grid = element_blank(),
         panel.background = element_blank(),
         axis.line = element_line(colour = "black"),
-        axis.title = element_text(size = 16),
+        axis.title = element_text(size = 15),
         axis.text = element_text(size = 13))
+ggsave(file.path("./figures", "figS10.png"),
+       p, width = 10, height = 8)
 
-ggsave(file.path(cfg$out_dir, "cellprop_test_curve.png"), p, width = 7, height = 5)
-message("Saved: ", file.path(cfg$out_dir, "cellprop_test_curve.png"))
+long_df <- stat_table %>%
+  select(prop_target_B, rep, starts_with("rankpct_top")) %>%
+  pivot_longer(starts_with("rankpct_top"), names_to = "topN", values_to = "rankpct") %>%
+  mutate(topN = factor(as.integer(sub("rankpct_top", "", topN)), levels = top_ns))
 
-# The "nuisance" rows (if run) should sit near ~0 across the range, confirming
-# that total-cell-number differences alone do not create false positives.
+summ <- long_df %>% group_by(prop_target_B, topN) %>%
+  summarise(med = median(rankpct, na.rm = TRUE), .groups = "drop")
+
+p2 <- ggplot(summ, aes(prop_target_B, med, color = topN, group = topN)) +
+  geom_line(linewidth = 0.9) + geom_point(size = 2) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey60") +
+  scale_x_reverse() + scale_y_reverse(limits = c(1, 0)) +
+  scale_color_viridis_d(end = 0.9) +
+  labs(x = "UD proportion in condition B",
+       y = "Median rank percentile of UD markers", color = "top-N") +
+  theme(panel.grid = element_blank(), panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title = element_text(size = 15), axis.text = element_text(size = 12))
+
+
