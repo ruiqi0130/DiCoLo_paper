@@ -145,6 +145,7 @@ the mapping.
 | `<dataset>/benchmarking_result.csv` | `aggregate_benchmark_results.R` | Rmd, Fig 3 |
 | `smom2/<MUT\|CTL>_dicolo_modules.rds` | `run_modules_smom2.R` | Rmd Fig 4B/4C/4D and S4; `run_concordance_analysis.R` |
 | `wlsko/<CTL>_dicolo_modules.rds` | `run_modules_wls.R` | `run_modules_wls.R` (plotting stage) |
+| `smom2/sensitivity_test/jaccard_result_{ndim_knn,dm_vs_pc}.csv` | `run_sensitivity_test.R` | same script (plotting stage) |
 | `*/parameters/GeneTrajectory_*/emd.csv` | `DiCoLo::ComputeGeneEMD()` | every script that builds a graph operator |
 
 Every script checks whether its intermediates already exist and skips
