@@ -44,6 +44,7 @@ source_helpers <- function() {
   source(file.path(R_DIR, "simulation_functions.R"))
   source(file.path(R_DIR, "benchmarking_functions.R"))
   source(file.path(R_DIR, "plotting_functions.R"))
+  source(file.path(R_DIR, "module_derivation.R"))
   invisible(TRUE)
 }
 

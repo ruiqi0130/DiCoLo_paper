@@ -465,6 +465,31 @@ p = ggplot(msig_result, aes(x=modules, y=Description)) +
 ggsave(file.path(FIGURE_DIR, "fig4D_pathway_enrichment.png"), p, 
        width = 8, height = 4)
 ```
+# Figure 4E
+```{r}
+df_all <- read.csv(file.path(data.path,"benchmark_result.csv"))
+df_all$method <- factor(df_all$method, levels = c("DiCoLo", "DGCA", "lemur", "milode", "memento"))
+levels(df_all$method) = c("DiCoLo","DGCA","LEMUR","miloDE","Memento")
+p <- ggplot(df_all, aes(x = method, y = auprc, fill = method)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = sprintf("%.3f", auprc)), vjust = -0.5, size = 4) +
+  # facet_wrap(~ label) +
+  scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0.1))) +
+  labs(x = "Method",
+       y = "Normalized AUPRC") +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 14),
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 13, angle = 30, hjust = 1),
+    axis.text.y = element_text(size = 13),
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(colour = "black")
+  )
+p
+```
 
 # Figure S4
 ```{r}

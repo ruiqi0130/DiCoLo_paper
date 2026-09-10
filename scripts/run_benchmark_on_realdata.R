@@ -2,9 +2,8 @@
 # Real-data benchmark: Sennett DC signature recovery
 # Uses independent biological reference (Sennett et al. 2015 DC signature).
 #
-# Two contrasts:
-#   1. SmoM2 vs CTL (E13.5): rank toward SmoM2 (precocious DC formation)
-#   2. Wls   vs CTL (E14.5): rank toward CTL   (DC fails in Wls)
+# Contrast:
+#   SmoM2 vs CTL (E13.5): rank toward SmoM2 (precocious DC formation)
 # =============================================================================
 
 # Load libraries ----
@@ -30,12 +29,12 @@ source("config.R")
 source_helpers()
 dir.path    <- DATA_DIR
 figure.path <- FIGURE_DIR
-source("./code/benchmarking_functions.R")
+source("./R/benchmarking_functions.R")
 # =============================================================================
 # 0. Independent reference: Sennett et al. 2015 DC signature
 # =============================================================================
 # Data downloaded from https://ars.els-cdn.com/content/image/1-s2.0-S153458071500430X-mmc2.xlsx
-sennett_dc_genes <- readxl::read_excel(file.path(DATA_DIR, "Sennett_gene_list.xlsx"),sheet = "DC") %>% as.data.frame()
+sennett_dc_genes <- readxl::read_excel(file.path(DATA_DIR, "smom2","Sennett_gene_list.xlsx"),sheet = "DC") %>% as.data.frame()
 sennett_dc_genes <- sennett_dc_genes[5:nrow(sennett_dc_genes),2] 
 cat(sprintf("Sennett DC signature: %d genes loaded\n", length(sennett_dc_genes)))
 
@@ -50,14 +49,14 @@ datasets <- list(
     direc = "condition1",  # rank toward MUT (precocious DC)
     label = "SmoM2 vs CTL",
     n_eig = 1
-  ),
-  wlsko = list(
-    file1 = "data_S_wlsko_dermal_E14.5_MUT.rds", # condition1 = WlsKO
-    file2 = "data_S_wlsko_dermal_E14.5_CTL.rds",    # condition2 = CTL
-    direc = "condition2",  # rank toward CTL (DC present in CTL, absent in Wls)
-    label = "Wls vs CTL",
-    n_eig = 3
   )
+  # wlsko = list(
+  #   file1 = "data_S_wlsko_dermal_E14.5_MUT.rds", # condition1 = WlsKO
+  #   file2 = "data_S_wlsko_dermal_E14.5_CTL.rds",    # condition2 = CTL
+  #   direc = "condition2",  # rank toward CTL (DC present in CTL, absent in Wls)
+  #   label = "Wls vs CTL",
+  #   n_eig = 3
+  # )
 )
 
 dir.path.data <- DATA_DIR
@@ -271,13 +270,14 @@ all_results <- lapply(names(datasets), function(dataset_name) {
 # 3. Combine and save results
 # =============================================================================
 df_all <- do.call(rbind, lapply(all_results,function(x) x[["result_df"]]))
+write.csv(df_all, file = file.path(dir.path.data,"smom2","benchmark_result.csv"))
 
 # =============================================================================
 # 4. Plot: Figure 4E
 # =============================================================================
 df_all$method <- factor(df_all$method, levels = c("DiCoLo", "DGCA", "lemur", "milode", "memento"))
 levels(df_all$method) = c("DiCoLo","DGCA","LEMUR","miloDE","Memento")
-p <- ggplot(df_all %>% filter(label == "Wls vs CTL"), aes(x = method, y = auprc, fill = method)) +
+p <- ggplot(df_all, aes(x = method, y = auprc, fill = method)) +
   geom_col(width = 0.6) +
   geom_text(aes(label = sprintf("%.3f", auprc)), vjust = -0.5, size = 4) +
   # facet_wrap(~ label) +
