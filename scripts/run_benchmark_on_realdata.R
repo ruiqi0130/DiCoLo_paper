@@ -25,15 +25,17 @@ suppressPackageStartupMessages({
   require(RColorBrewer)
 })
 
-setwd("/data/ruiqi/DiCoLo_paper")
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 source("./code/benchmarking_functions.R")
-figure.path <- "./figures"
-
 # =============================================================================
 # 0. Independent reference: Sennett et al. 2015 DC signature
 # =============================================================================
 # Data downloaded from https://ars.els-cdn.com/content/image/1-s2.0-S153458071500430X-mmc2.xlsx
-sennett_dc_genes <- readxl::read_excel("./DiCoLo_data/Sennett_gene_list.xlsx",sheet = "DC") %>% as.data.frame()
+sennett_dc_genes <- readxl::read_excel(file.path(DATA_DIR, "Sennett_gene_list.xlsx"),sheet = "DC") %>% as.data.frame()
 sennett_dc_genes <- sennett_dc_genes[5:nrow(sennett_dc_genes),2] 
 cat(sprintf("Sennett DC signature: %d genes loaded\n", length(sennett_dc_genes)))
 
@@ -58,7 +60,7 @@ datasets <- list(
   )
 )
 
-dir.path.data <- "DiCoLo_data"
+dir.path.data <- DATA_DIR
 method_ls <- c("DiCoLo", "milode", "lemur", "DGCA", "memento")
 
 # =============================================================================
@@ -271,7 +273,7 @@ all_results <- lapply(names(datasets), function(dataset_name) {
 df_all <- do.call(rbind, lapply(all_results,function(x) x[["result_df"]]))
 
 # =============================================================================
-# 4. Plot: Figure 4D
+# 4. Plot: Figure 4E
 # =============================================================================
 df_all$method <- factor(df_all$method, levels = c("DiCoLo", "DGCA", "lemur", "milode", "memento"))
 levels(df_all$method) = c("DiCoLo","DGCA","LEMUR","miloDE","Memento")
@@ -293,7 +295,7 @@ p <- ggplot(df_all %>% filter(label == "Wls vs CTL"), aes(x = method, y = auprc,
     panel.background = element_blank(),
     axis.line = element_line(colour = "black")
   )
-ggsave(file.path(figure.path, "fig4D_realdata_benchmark.png"), p, 
+ggsave(file.path(figure.path, "fig4E_signature_recovery.png"), p, 
        width = 5, height = 5)
 
 

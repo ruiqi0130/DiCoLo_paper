@@ -1,5 +1,5 @@
 # =============================================================================
-# run_covariance_diagnosis.R   (Fig S7-E)
+# run_covariance_diagnosis.R   (Fig S8F, S8G)
 #
 # Design diagnostic for the K-factor covariance model (R3-Q1). It re-uses the
 # params.rds saved by run_benchmark_on_simulations.R for the cov_strength test,
@@ -27,12 +27,14 @@ suppressPackageStartupMessages({
   library(reshape2)
 })
 
-setwd("/data/ruiqi/DiCoLo_paper")
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 source("./code/simulation_functions.R")     # <-- must be the K-factor version
 
 # ---- settings: match your S7-D run ---------------------------------------
-dir.path    <- "DiCoLo_data"
-figure.path = "./figures"
 data.path   <- file.path(dir.path, "pbmc10k")   # dataset S7-D was run on
 data.file   <- "pbmc10k.rds"
 sample_ls   <- c("monocyte1", "monocyte2")
@@ -130,7 +132,7 @@ p_violin <- ggplot(cor_df, aes(cov_strength, correlation)) +
     panel.grid = element_blank(),
     panel.background = element_blank(),
     axis.line = element_line(colour = "black"))
-ggsave(file.path(figure.path, "figS7E_violin.png"), p_violin,
+ggsave(file.path(figure.path, "figS8F_covariance_violin.png"), p_violin,
        width = 6, height = 4.5, dpi = 300)
 
 # ---- Plot 2: heatmaps, one rep per cov_strength, shared gene order ---------
@@ -172,11 +174,11 @@ if (DRAW_HEATMAP && length(heat_mats) >= 1) {
       })
     
     p_heat <- wrap_plots(plot_list, nrow = 2) + plot_layout(guides = "collect")
-    ggsave(file.path(figure.path, "figS7E_heatmap.png"), p_heat,
+    ggsave(file.path(figure.path, "figS8G_covariance_heatmap.png"), p_heat,
            width = 3 * 2, height = 3 * 2 + 1, dpi = 300)
   }
 }
 
 message("Done. Wrote to ", out.path,
-        "\n  figS7E_violin.png\n  figS7E_heatmap.png\n",
+        "\n  figS8F_covariance_violin.png\n  figS8G_covariance_heatmap.png\n",
         "  cov_offdiag_correlations.csv\n  cov_correlation_summary.csv")

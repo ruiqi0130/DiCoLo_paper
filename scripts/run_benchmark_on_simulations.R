@@ -21,14 +21,14 @@ suppressPackageStartupMessages(
     require(RColorBrewer)
   }
 )
-setwd("/data/ruiqi/DiCoLo_paper")
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 source("./code/simulation_functions.R")
 source("./code/benchmarking_functions.R")
-# figure.path = "/banach1/ruiqi/bi_gene_graphs/figures"
-figure.path = "./figures"
-
 # Load data ------
-dir.path = "DiCoLo_data"
 # pbmc10k
 data.path = file.path(dir.path,"pbmc10k")
 sample_ls = c("monocyte1","monocyte2")
@@ -475,33 +475,55 @@ df = do.call(rbind,df)
 write.csv(df,file = file.path(data.path,"parameters",para_test,"benchmarking_result.csv"),row.names = FALSE)
 df <- read.csv(file.path(data.path,"parameters",para_test,"benchmarking_result.csv"))
 
-# write.csv(df,file = file.path(data.path,"benchmarking_result.csv"),row.names = FALSE)
-# df <- read.csv(file.path(data.path,"benchmarking_result.csv"))
-# Plot
-df$method = factor(df$method, levels = c("DiCoLo","DGCA","lemur","milode"))
-p = ggplot(data = df, 
-       aes(x = para_grid,
-           y = score,color = method
-       )) +
-  geom_boxplot() +
-  scale_y_continuous(limits = c(0.5,1)) +
-  labs(
-       x = "Background expression fraction",
-       # x = "cov strength",
-       # x = "UMI Downsampling Proportion",
-       y = "Normalized AUPRC") + 
-  theme(
-    legend.title = element_text(size = 20),
-    legend.text = element_text(size = 15),
-    strip.text.x = element_text(size = 15),
-    axis.title.x = element_text(size = 20),
-    axis.title.y = element_text(size = 20),
-    axis.text.x = element_text(size = 15),
-    axis.text.y = element_text(size = 15),
-    panel.grid = element_blank(),
-    panel.background = element_blank(),
-    axis.line = element_line(colour = "black"))
-ggsave(file.path(figure.path,"figS7D.png"), p, width = 7, height = 5)
+# Per-dataset CSVs consumed by Fig 3 in DiCoLo_figure_code.Rmd are produced by
+# scripts/aggregate_benchmark_results.R (see README - "Derived data provenance").
+# =============================================================================
+# Plot: Figure S8 A-E
+#
+# One panel per stress-test parameter; all five are produced in one pass.
+#   S8A  diff.pct          background expression fraction  (cap_background off)
+#   S8B  diffuse           diffuse neighborhood boundary
+#   S8C  overlap           partially overlapping neighborhoods
+#   S8D  batch_downsample  UMI downsampling of the perturbed neighborhood
+#   S8E  cov_strength      cell-level covariance among perturbed genes
+# =============================================================================
+figS8_panels <- list(
+  A = list(para_test = "diff.pct",         xlab = "Background expression fraction"),
+  B = list(para_test = "diffuse",          xlab = "Diffuse neighborhood boundary"),
+  C = list(para_test = "overlap",          xlab = "Overlap fraction"),
+  D = list(para_test = "batch_downsample", xlab = "UMI downsampling proportion"),
+  E = list(para_test = "cov_strength",     xlab = "Covariance strength")
+)
+
+theme_dicolo <- theme(
+  legend.title = element_text(size = 20),
+  legend.text  = element_text(size = 15),
+  strip.text.x = element_text(size = 15),
+  axis.title.x = element_text(size = 20),
+  axis.title.y = element_text(size = 20),
+  axis.text.x  = element_text(size = 15),
+  axis.text.y  = element_text(size = 15),
+  panel.grid       = element_blank(),
+  panel.background = element_blank(),
+  axis.line        = element_line(colour = "black"))
+
+for (panel in names(figS8_panels)) {
+  cfg <- figS8_panels[[panel]]
+  csv <- file.path(data.path, "parameters", cfg$para_test, "benchmarking_result.csv")
+  if (!file.exists(csv)) {
+    message(sprintf("[figS8%s] skipped, no results at %s", panel, csv)); next
+  }
+  df <- read.csv(csv)
+  df$method <- factor(df$method, levels = c("DiCoLo","DGCA","lemur","milode"))
+  p <- ggplot(df, aes(x = para_grid, y = score, color = method)) +
+    geom_boxplot() +
+    scale_y_continuous(limits = c(0.5, 1)) +
+    labs(x = cfg$xlab, y = "Normalized AUPRC") +
+    theme_dicolo
+  out <- file.path(figure.path, sprintf("figS8%s_%s.png", panel, cfg$para_test))
+  ggsave(out, p, width = 7, height = 5)
+  message(sprintf("[figS8%s] wrote %s", panel, out))
+}
 
 
 p = ggplot(data = df %>% filter(method %in% c("memento","DGCA")) %>%
@@ -529,7 +551,7 @@ p = ggplot(data = df %>% filter(method %in% c("memento","DGCA")) %>%
     panel.grid = element_blank(),
     panel.background = element_blank(),
     axis.line = element_line(colour = "black"))
-ggsave(file.path(figure.path,"figS8.png"), p, width = 10, height = 5)
+ggsave(file.path(figure.path,"figS9_memento_dgca.png"), p, width = 10, height = 5)
 
 df_summary <- df %>%
   group_by(method, para_grid) %>%

@@ -50,7 +50,11 @@ suppressPackageStartupMessages({
   require(parallel)
 })
 
-setwd("/data/ruiqi/DiCoLo_paper")                
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 source("./code/simulation_functions.R")
 source("./code/benchmarking_functions.R")
 
@@ -328,7 +332,7 @@ p <- ggplot(stat_table, aes(x = prop_bin, y = rankpct_top100)) +
         axis.line = element_line(colour = "black"),
         axis.title = element_text(size = 15),
         axis.text = element_text(size = 13))
-ggsave(file.path("./figures", "figS10.png"),
+ggsave(file.path(FIGURE_DIR, "figS11_celltype_abundance.png"),
        p, width = 10, height = 8)
 
 long_df <- stat_table %>%

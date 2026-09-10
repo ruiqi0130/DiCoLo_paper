@@ -1,7 +1,7 @@
 # =============================================================================
 # run_sensitivity_test.R
 #
-# Fig S6 - Robustness of DiCoLo to cell-graph construction parameters.
+# Fig S7 - Robustness of DiCoLo to cell-graph construction parameters.
 #
 # For the SmoM2 dataset, we test the differential operator of SmoM2 AGAINST CTL
 # (comp = SmoM2, proj = CTL) and measure how stable the set of significant
@@ -28,16 +28,20 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
-setwd("/data/ruiqi/DiCoLo_paper")
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 # If DiCoLo is not installed as a package, point ComputeGeneEMD at the bundled
 # OT backend by setting script_dir below (dir containing
 # gene_distance_cal_parallel.py). Left NULL => use the installed package copy.
-script_dir <- NULL
+script_dir <- OT_SCRIPT_DIR
 
 # ----------------------------------------------------------------------------
 # 0. User settings -- ADJUST THESE to match your SmoM2 object
 # ----------------------------------------------------------------------------
-data.path     <- file.path("DiCoLo_data", "smom2")
+data.path     <- file.path(DATA_DIR, "smom2")
 res.path      <- file.path(data.path, "sensitivity")   # outputs go here
 condition_col <- "condition"                # metadata column holding condition
 cond_levels   <- c("SmoM2", "CTL")          # comp first, proj second
@@ -223,7 +227,7 @@ p_pca <- df %>% filter(config %in% c("default", "pca")) %>%
   base_theme
 
 p <- (p_npc | p_K | p_pca) + plot_layout(guides = "collect")
-ggsave(file.path(res.path, "figS6_sensitivity.png"), p, width = 15, height = 5, dpi = 300)
+ggsave(file.path(res.path, "figS7_sensitivity.png"), p, width = 15, height = 5, dpi = 300)
 
 message("Done. Wrote:\n  ", file.path(res.path, "sensitivity_jaccard.csv"),
-        "\n  ", file.path(res.path, "figS6_sensitivity.png"))
+        "\n  ", file.path(res.path, "figS7_sensitivity.png"))
