@@ -148,6 +148,8 @@ mk <- FindMarkers(srat_ctl, ident.1 = cfg$target_type,
                   only.pos = TRUE, verbose = FALSE)
 mk <- mk[rownames(mk) %in% eligible, ]
 target_markers <- rownames(mk[order(mk$p_val_adj, -mk$avg_log2FC), ])[1:cfg$n_marker]
+target_markers <- rownames(mk[order(mk$p_val_adj, -mk$avg_log2FC), ])[1:500]
+
 message(sprintf("Monitoring %d %s markers.", length(target_markers), cfg$target_type))
 
 # ======================= MAIN SWEEP ==========================================
@@ -173,7 +175,7 @@ for(frac in cfg$fractions){
     } else{
       dir.create(tmp_root, recursive = TRUE, showWarnings = FALSE)
       common_genes <- union(SelectCommonGenes(srat_A, srat_B, ngenes = cfg$ngenes_common),
-                            target_markers)
+                            target_markers[1:cfg$n_marker])
       data_S_ls <- list(preprocess_for_emd(srat_A), preprocess_for_emd(srat_B))
       emd_paths <- lapply(1:2, function(i) {
         tmp_path <- file.path(tmp_root, paste0("GeneTrajectory", i))
@@ -235,6 +237,7 @@ for(frac in cfg$fractions){
   }
 }
 
+saveRDS(results, file = file.path(cfg$out_dir,"results.rds"))
 # ==============STAT Table ==============================
 null_bounds <- function(n, level = 0.975) {
   a_n <- sqrt(2 * log(n))
@@ -252,7 +255,7 @@ excess_kurtosis <- function(x) {
 }
 
 
-top_ns <- c(50)
+top_ns <- c(10:50,100,300,500)
 stat_table <- do.call(rbind, lapply(results, function(r) {
   z <- r$z_scores
   z <- z[is.finite(z)]
@@ -311,10 +314,10 @@ stat_table <- do.call(rbind, lapply(results, function(r) {
   )
 }))
 
-
+write.csv(stat_table, file = file.path(cfg$out_dir,"stat_table.csv"),row.names = FALSE)
 # ======================= PLOT ================================================
 stat_table$prop_bin <- factor(round(stat_table$prop_target_B, 3))  
-p <- ggplot(stat_table, aes(x = prop_bin, y = rankpct_top50)) +
+p <- ggplot(stat_table, aes(x = prop_bin, y = rankpct_top100)) +
   geom_boxplot(outlier.size = 0.8, width = 0.6) +
   geom_jitter(width = 0.12, size = 1, alpha = 0.4) +
   scale_y_reverse(limits = c(1, 0)) +
