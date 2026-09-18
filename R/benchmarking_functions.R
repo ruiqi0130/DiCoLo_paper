@@ -4,7 +4,9 @@
 # remotes::install_github("csglab/GEDI")
 # devtools::install_github("andymckenzie/DGCA")
 library(reticulate)
-use_python("/usr/bin/python3", required = TRUE)
+library(dplyr)
+# Python interpreter is selected via config.R::use_dicolo_python();
+# RunMemento() calls it lazily so that sourcing this file has no side effects.
 
 # supervised embedding is more suitable for sensitive DE detection
 add_azimuth_supervised = function(sce , genes , split.by = "sample", ref_samples , query_samples, nPC = 30, reducedDim.name , bpparam){
@@ -195,7 +197,7 @@ RunDGCA <- function(srat1, srat2, input_genes){
   data_S = merge(srat1, srat2)
   data_S$'condition' = ifelse(colnames(data_S) %in% colnames(srat1),"condition1","condition2")
   data_mtx = GetAssayData(data_S, assay = "RNA", layer = "data")[input_genes,]
-  design_mat = data_S@meta.data %>% select(condition)
+  design_mat = data_S@meta.data %>% dplyr::select(condition)
   design_mat <- model.matrix(~ 0 + condition, data = design_mat)
   colnames(design_mat) = c("condition1","condition2")
   
@@ -209,6 +211,9 @@ RunDGCA <- function(srat1, srat2, input_genes){
 
 RunMemento <- function(srat1, srat2, input_genes,
                        capture_rate = 0.25, num_boot = 1000L, num_cpus = 4L){
+  # Bind the Python interpreter here rather than at load time (see config.R).
+  if (exists("use_dicolo_python")) use_dicolo_python()
+
   data_S = merge(srat1, srat2)
   data_S$'condition' = ifelse(colnames(data_S) %in% colnames(srat1), "condition1", "condition2")
 
@@ -303,7 +308,7 @@ Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1
       mutate(padj = pValDiff_adj)
     de_res = de_res[de_res[,direc] == "+",]
     de_res = de_res %>%
-      tidyr::pivot_longer(cols = c(Gene1, Gene2), values_to = "gene") %>% select(gene,padj,zScoreDiff)
+      tidyr::pivot_longer(cols = c(Gene1, Gene2), values_to = "gene") %>% dplyr::select(gene,padj,zScoreDiff)
     de_res = de_res %>% arrange(.,padj,desc(abs(zScoreDiff))) %>% distinct(.,gene, .keep_all = TRUE)
     
     de_res$'rank' = 1:nrow(de_res)
@@ -325,7 +330,7 @@ Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1
   if(method == "memento"){
     de_res = de_res %>% filter(direction == direc) %>%
       tidyr::pivot_longer(cols = c(gene_1, gene_2), values_to = "gene") %>%
-      select(gene, corr_pval, corr_coef)
+      dplyr::select(gene, corr_pval, corr_coef)
     if(nrow(de_res) == 0){
       de_res = data.frame(gene = character(0), corr_pval = numeric(0), corr_coef = numeric(0),
                           rank = nrow(de_res), score = numeric(0))
@@ -338,7 +343,7 @@ Generate_rank_table <- function(de_res, method, input_genes, direc = "condition1
   }
   
   rank_df = data.frame(gene = input_genes)
-  rank_df <- dplyr::left_join(rank_df,de_res,by = "gene") %>% select(gene, rank, score)
+  rank_df <- dplyr::left_join(rank_df,de_res,by = "gene") %>% dplyr::select(gene, rank, score)
   rank_df[is.na(rank_df$rank),"rank"] = nrow(rank_df)
   rank_df[is.na(rank_df$score),"score"] = 0
   
@@ -395,3 +400,34 @@ get_auc = function(gene_list = NULL, real_score,
   }
 }
 
+
+# ---------------------------------------------------------------------------
+# plot_module_enrichment
+#
+# GSEA-style running-enrichment curve for one method against one module.
+# Used by scripts/run_concordance_analysis.R (Supplemental Tables 3-4).
+# ---------------------------------------------------------------------------
+plot_module_enrichment <- function(ranks, module_genes, method_name, 
+                                   module_name = "", color = "#2196F3") {
+  # Single method, single module — GSEA-style running enrichment
+  rank_df <- ranks[ranks$method == method_name, ]
+  rank_df <- rank_df[order(rank_df$rank), ]
+  n <- nrow(rank_df)
+  n_hit <- sum(rank_df$gene %in% module_genes)
+  
+  # Running sum
+  rank_df$hit <- ifelse(rank_df$gene %in% module_genes, 1, 0)
+  rank_df$running_sum <- cumsum(rank_df$hit / n_hit - (1 - rank_df$hit) / (n - n_hit))
+  
+  ggplot(rank_df, aes(x = 1:n, y = running_sum)) +
+    geom_line(color = color, linewidth = 0.8) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+    # Barcode ticks at bottom
+    geom_segment(data = rank_df[rank_df$hit == 1, ],
+                 aes(x = which(rank_df$hit == 1), xend = which(rank_df$hit == 1),
+                     y = -0.05, yend = -0.15),
+                 color = "black", linewidth = 0.3) +
+    labs(x = "Gene rank", y = "Enrichment score",
+         title = paste0(method_name, " — ", module_name)) +
+    theme_minimal()
+}

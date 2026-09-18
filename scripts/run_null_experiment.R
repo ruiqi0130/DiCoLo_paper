@@ -27,10 +27,12 @@ suppressPackageStartupMessages(
 )
 
 # --- EDIT THESE PATHS TO MATCH YOUR ENVIRONMENT ---
-setwd("/data/ruiqi/DiCoLo_paper")
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 source("./code/simulation_functions.R")
-dir.path <- "DiCoLo_data"
-
 # =============================================================================
 # NULL TYPE 1: Random split of ONE sample into two halves------
 # This is the cleanest null: same cells, same batch, randomly partitioned.
@@ -542,7 +544,7 @@ fig <- (
 # fig <- (row1 / row2 / row3)  +
 #   patchwork::plot_layout(heights = c(2, 1, 1))
 
-ggsave(file.path("./figures", "figS9.png"),
+ggsave(file.path(FIGURE_DIR, "figS10_null_and_negative_control.png"),
        fig, width = 13, height = 8)
 
 

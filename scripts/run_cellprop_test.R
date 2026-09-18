@@ -50,13 +50,17 @@ suppressPackageStartupMessages({
   require(parallel)
 })
 
-setwd("/data/ruiqi/DiCoLo_paper")                
+# --- Paths, python backend, helper functions (see config.R at repo root) -----
+source("config.R")
+source_helpers()
+dir.path    <- DATA_DIR
+figure.path <- FIGURE_DIR
 source("./code/simulation_functions.R")
 source("./code/benchmarking_functions.R")
 
 # ======================= CONFIG ==============================================
 cfg <- list(
-  data_rds     = "DiCoLo_data/smom2/data_S_smom2_dermal_E13.5_CTL.rds",  # single real condition (CTL only)
+  data_rds     = file.path(DATA_DIR, "smom2", "data_S_smom2_dermal_E13.5_CTL.rds"),  # single real condition (CTL only)
   celltype_col = "celltype",                  # metadata column with LD/UD/(DC)
   target_type  = "UD",                         # the type whose proportion we sweep
   lock_type    = "LD",                         # locked (untouched in B)
@@ -68,7 +72,7 @@ cfg <- list(
   n_marker = 50,
   eig_agg      = "leading",  # "leading" (1st eigvec) or "topk" (knee, weighted)
   npc          = 10,
-  out_dir      = "DiCoLo_data/smom2/cellprop_test"
+  out_dir      = file.path(DATA_DIR, "smom2", "cellprop_test")
 )
 dir.create(cfg$out_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -328,7 +332,7 @@ p <- ggplot(stat_table, aes(x = prop_bin, y = rankpct_top100)) +
         axis.line = element_line(colour = "black"),
         axis.title = element_text(size = 15),
         axis.text = element_text(size = 13))
-ggsave(file.path("./figures", "figS10.png"),
+ggsave(file.path(FIGURE_DIR, "figS11_celltype_abundance.png"),
        p, width = 10, height = 8)
 
 long_df <- stat_table %>%
