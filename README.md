@@ -278,4 +278,4 @@ Python (via `reticulate`, selected by `DICOLO_PYTHON`):
 
 > All custom code is available at <https://github.com/ruiqi0130/DiCoLo_paper> and is provided as Supplemental
 > Code. The DiCoLo R package is available at
-> <https://github.com/KlugerLab/DiCoLo>. Processed data required to reproduce all figures are deposited at Zenodo (DOI: `<data DOI>`).
+> <https://github.com/KlugerLab/DiCoLo>. Processed data required to reproduce all figures are deposited at Zenodo (DOI: `doi.org/10.5281/zenodo.22822058`).
